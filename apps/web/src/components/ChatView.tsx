@@ -11,6 +11,7 @@ import {
   type ProviderApprovalDecision,
   type ServerProvider,
   type ScopedThreadRef,
+  type ThreadFollowUpMode,
   type ThreadId,
   type TurnId,
   type KeybindingCommand,
@@ -2454,8 +2455,11 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
-    e?.preventDefault();
+  const submitComposer = async (activeRunMode?: ThreadFollowUpMode) => {
+    const effectiveActiveRunMode =
+      !latestTurnSettled && isServerThread
+        ? (activeRunMode ?? settings.activeTurnFollowUpMode)
+        : null;
     const api = readEnvironmentApi(environmentId);
     if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
     if (activePendingProgress) {
@@ -2541,7 +2545,9 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     sendInFlightRef.current = true;
-    beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
+    if (effectiveActiveRunMode === null) {
+      beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
+    }
 
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
@@ -2575,20 +2581,22 @@ export default function ChatView(props: ChatViewProps) {
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
     }));
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        id: messageIdForSend,
-        role: "user",
-        text: outgoingMessageText,
-        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-        createdAt: messageCreatedAt,
-        streaming: false,
-      },
-    ]);
-    // Sending a message should always bring the latest user turn into view.
-    shouldAutoScrollRef.current = true;
-    forceStickToBottom();
+    if (effectiveActiveRunMode !== "queue") {
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          createdAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+      // Sending a message should always bring the latest user turn into view.
+      shouldAutoScrollRef.current = true;
+      forceStickToBottom();
+    }
 
     setThreadError(threadIdForSend, null);
     if (expiredTerminalContextCount > 0) {
@@ -2658,53 +2666,89 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       const turnAttachments = await turnAttachmentsPromise;
-      const bootstrap =
-        isLocalDraftThread || baseBranchForWorktree
-          ? {
-              ...(isLocalDraftThread
-                ? {
-                    createThread: {
-                      projectId: activeProject.id,
-                      title,
-                      modelSelection: threadCreateModelSelection,
-                      runtimeMode,
-                      interactionMode,
-                      branch: activeThread.branch,
-                      worktreePath: activeThread.worktreePath,
-                      createdAt: activeThread.createdAt,
-                    },
-                  }
-                : {}),
-              ...(baseBranchForWorktree
-                ? {
-                    prepareWorktree: {
-                      projectCwd: activeProject.cwd,
-                      baseBranch: baseBranchForWorktree,
-                      branch: buildTemporaryWorktreeBranchName(),
-                    },
-                    runSetupScript: true,
-                  }
-                : {}),
-            }
-          : undefined;
-      beginLocalDispatch({ preparingWorktree: false });
-      await api.orchestration.dispatchCommand({
-        type: "thread.turn.start",
-        commandId: newCommandId(),
-        threadId: threadIdForSend,
-        message: {
-          messageId: messageIdForSend,
-          role: "user",
-          text: outgoingMessageText,
-          attachments: turnAttachments,
-        },
-        modelSelection: ctxSelectedModelSelection,
-        titleSeed: title,
-        runtimeMode,
-        interactionMode,
-        ...(bootstrap ? { bootstrap } : {}),
-        createdAt: messageCreatedAt,
-      });
+      if (effectiveActiveRunMode === "steer") {
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.steer",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          message: {
+            messageId: messageIdForSend,
+            role: "user",
+            text: outgoingMessageText,
+            attachments: turnAttachments,
+          },
+          modelSelection: ctxSelectedModelSelection,
+          createdAt: messageCreatedAt,
+        });
+      } else if (effectiveActiveRunMode === "queue") {
+        await api.orchestration.dispatchCommand({
+          type: "thread.follow-up.queue",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          followUpId: randomUUID(),
+          message: {
+            messageId: messageIdForSend,
+            role: "user",
+            text: outgoingMessageText,
+            attachments: turnAttachments,
+          },
+          modelSelection: ctxSelectedModelSelection,
+          createdAt: messageCreatedAt,
+        });
+        toastManager.add({
+          type: "info",
+          title: "Follow-up queued",
+          description: "It will send after the current turn settles.",
+        });
+      } else {
+        const bootstrap =
+          isLocalDraftThread || baseBranchForWorktree
+            ? {
+                ...(isLocalDraftThread
+                  ? {
+                      createThread: {
+                        projectId: activeProject.id,
+                        title,
+                        modelSelection: threadCreateModelSelection,
+                        runtimeMode,
+                        interactionMode,
+                        branch: activeThread.branch,
+                        worktreePath: activeThread.worktreePath,
+                        createdAt: activeThread.createdAt,
+                      },
+                    }
+                  : {}),
+                ...(baseBranchForWorktree
+                  ? {
+                      prepareWorktree: {
+                        projectCwd: activeProject.cwd,
+                        baseBranch: baseBranchForWorktree,
+                        branch: buildTemporaryWorktreeBranchName(),
+                      },
+                      runSetupScript: true,
+                    }
+                  : {}),
+              }
+            : undefined;
+        beginLocalDispatch({ preparingWorktree: false });
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          message: {
+            messageId: messageIdForSend,
+            role: "user",
+            text: outgoingMessageText,
+            attachments: turnAttachments,
+          },
+          modelSelection: ctxSelectedModelSelection,
+          titleSeed: title,
+          runtimeMode,
+          interactionMode,
+          ...(bootstrap ? { bootstrap } : {}),
+          createdAt: messageCreatedAt,
+        });
+      }
       turnStartSucceeded = true;
     })().catch(async (err: unknown) => {
       if (
@@ -2740,9 +2784,22 @@ export default function ChatView(props: ChatViewProps) {
       );
     });
     sendInFlightRef.current = false;
-    if (!turnStartSucceeded) {
+    if (!turnStartSucceeded && effectiveActiveRunMode === null) {
       resetLocalDispatch();
     }
+  };
+
+  const onSend = async (e?: { preventDefault: () => void }) => {
+    e?.preventDefault();
+    await submitComposer();
+  };
+
+  const onQueueFollowUp = async () => {
+    await submitComposer("queue");
+  };
+
+  const onSteerFollowUp = async () => {
+    await submitComposer("steer");
   };
 
   const onInterrupt = async () => {
@@ -3447,6 +3504,8 @@ export default function ChatView(props: ChatViewProps) {
               scheduleStickToBottom={scheduleStickToBottom}
               onSend={onSend}
               onInterrupt={onInterrupt}
+              onQueueFollowUp={onQueueFollowUp}
+              onSteerFollowUp={onSteerFollowUp}
               onImplementPlanInNewThread={onImplementPlanInNewThread}
               onRespondToApproval={onRespondToApproval}
               onSelectActivePendingUserInputOption={onSelectActivePendingUserInputOption}

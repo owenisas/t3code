@@ -14,6 +14,7 @@ import type {
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
+  ProviderSteerTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
   ThreadId,
@@ -24,12 +25,14 @@ import type { Effect } from "effect";
 import type { Stream } from "effect";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "restart-session" | "unsupported";
+export type ProviderTurnSteerMode = "native" | "interrupt-restart" | "unsupported";
 
 export interface ProviderAdapterCapabilities {
   /**
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  readonly turnSteer: ProviderTurnSteerMode;
 }
 
 export interface ProviderThreadTurnSnapshot {
@@ -62,6 +65,11 @@ export interface ProviderAdapterShape<TError> {
   readonly sendTurn: (
     input: ProviderSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, TError>;
+
+  /**
+   * Steer an active running turn with an immediate follow-up input.
+   */
+  readonly steerTurn: (input: ProviderSteerTurnInput) => Effect.Effect<void, TError>;
 
   /**
    * Interrupt an active turn.

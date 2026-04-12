@@ -9,6 +9,7 @@ import type {
   RuntimeMode,
   ScopedThreadRef,
   ServerProvider,
+  ThreadFollowUpMode,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -271,8 +272,12 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   isSendBusy: boolean;
   isConnecting: boolean;
   hasSendableContent: boolean;
+  runningFollowUpMode: ThreadFollowUpMode;
+  queuedFollowUpCount: number;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
+  onQueueFollowUp: () => void;
+  onSteerFollowUp: () => void;
   onImplementPlanInNewThread: () => void;
 }) {
   return (
@@ -291,8 +296,12 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         isConnecting={props.isConnecting}
         isPreparingWorktree={props.isPreparingWorktree}
         hasSendableContent={props.hasSendableContent}
+        runningFollowUpMode={props.runningFollowUpMode}
+        queuedFollowUpCount={props.queuedFollowUpCount}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
+        onQueueFollowUp={props.onQueueFollowUp}
+        onSteerFollowUp={props.onSteerFollowUp}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
       />
     </>
@@ -412,6 +421,8 @@ export interface ChatComposerProps {
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
   onInterrupt: () => void;
+  onQueueFollowUp: () => void;
+  onSteerFollowUp: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
@@ -492,6 +503,8 @@ export const ChatComposer = memo(
       scheduleStickToBottom,
       onSend,
       onInterrupt,
+      onQueueFollowUp,
+      onSteerFollowUp,
       onImplementPlanInNewThread,
       onRespondToApproval,
       onSelectActivePendingUserInputOption,
@@ -1601,6 +1614,12 @@ export const ChatComposer = memo(
     const handleInterruptPrimaryAction = useCallback(() => {
       void onInterrupt();
     }, [onInterrupt]);
+    const handleQueueFollowUpPrimaryAction = useCallback(() => {
+      void onQueueFollowUp();
+    }, [onQueueFollowUp]);
+    const handleSteerFollowUpPrimaryAction = useCallback(() => {
+      void onSteerFollowUp();
+    }, [onSteerFollowUp]);
     const handleImplementPlanInNewThreadPrimaryAction = useCallback(() => {
       void onImplementPlanInNewThread();
     }, [onImplementPlanInNewThread]);
@@ -1975,8 +1994,12 @@ export const ChatComposer = memo(
                     isConnecting={isConnecting}
                     isPreparingWorktree={isPreparingWorktree}
                     hasSendableContent={composerSendState.hasSendableContent}
+                    runningFollowUpMode={settings.activeTurnFollowUpMode}
+                    queuedFollowUpCount={activeThread?.queuedFollowUps.length ?? 0}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
+                    onQueueFollowUp={handleQueueFollowUpPrimaryAction}
+                    onSteerFollowUp={handleSteerFollowUpPrimaryAction}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
                   />
                 </div>

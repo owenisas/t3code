@@ -115,6 +115,12 @@ export interface CodexAppServerSendTurnInput {
   readonly interactionMode?: ProviderInteractionMode;
 }
 
+export interface CodexAppServerSteerTurnInput {
+  readonly threadId: ThreadId;
+  readonly input?: string;
+  readonly attachments?: ReadonlyArray<{ type: "image"; url: string }>;
+}
+
 export interface CodexAppServerStartSessionInput {
   readonly threadId: ThreadId;
   readonly provider?: "codex";
@@ -774,6 +780,48 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     await this.sendRequest(context, "turn/interrupt", {
       threadId: providerThreadId,
       turnId: effectiveTurnId,
+    });
+  }
+
+  async steerTurn(input: CodexAppServerSteerTurnInput): Promise<void> {
+    const context = this.requireSession(input.threadId);
+    const effectiveTurnId = context.session.activeTurnId;
+
+    const providerThreadId = readResumeThreadId({
+      threadId: context.session.threadId,
+      runtimeMode: context.session.runtimeMode,
+      resumeCursor: context.session.resumeCursor,
+    });
+    if (!effectiveTurnId || !providerThreadId) {
+      throw new Error("No active Codex turn is available to steer.");
+    }
+
+    const turnInput: Array<
+      { type: "text"; text: string; text_elements: [] } | { type: "image"; url: string }
+    > = [];
+    if (input.input) {
+      turnInput.push({
+        type: "text",
+        text: input.input,
+        text_elements: [],
+      });
+    }
+    for (const attachment of input.attachments ?? []) {
+      if (attachment.type === "image") {
+        turnInput.push({
+          type: "image",
+          url: attachment.url,
+        });
+      }
+    }
+    if (turnInput.length === 0) {
+      throw new Error("Turn steer input must include text or attachments.");
+    }
+
+    await this.sendRequest(context, "turn/steer", {
+      threadId: providerThreadId,
+      turnId: effectiveTurnId,
+      input: turnInput,
     });
   }
 

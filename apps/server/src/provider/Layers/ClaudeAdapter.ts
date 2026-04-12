@@ -2950,6 +2950,15 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   );
 
+  const steerTurn: ClaudeAdapterShape["steerTurn"] = Effect.fn("steerTurn")(function* (_input) {
+    return yield* new ProviderAdapterRequestError({
+      provider: PROVIDER,
+      method: "turn/steer",
+      detail:
+        "Claude runtime steering is handled by T3 Code via interrupt-and-restart; native steer is unavailable through this adapter.",
+    });
+  });
+
   const readThread: ClaudeAdapterShape["readThread"] = Effect.fn("readThread")(
     function* (threadId) {
       const context = yield* requireSession(threadId);
@@ -3044,9 +3053,11 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      turnSteer: "interrupt-restart",
     },
     startSession,
     sendTurn,
+    steerTurn,
     interruptTurn,
     readThread,
     rollbackThread,

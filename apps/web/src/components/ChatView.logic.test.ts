@@ -224,6 +224,7 @@ const makeThread = (input?: {
         assistantMessageId: null,
       }
     : null,
+  queuedFollowUps: [],
   branch: null,
   worktreePath: null,
   turnDiffSummaries: [],
@@ -283,6 +284,7 @@ function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) 
           ...(thread.pendingSourceProposedPlan
             ? { pendingSourceProposedPlan: thread.pendingSourceProposedPlan }
             : {}),
+          queuedFollowUps: thread.queuedFollowUps,
         },
       ]),
     ),
@@ -465,6 +467,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       archivedAt: null,
       updatedAt: "2026-03-29T00:00:10.000Z",
       latestTurn: previousLatestTurn,
+      queuedFollowUps: [],
       branch: null,
       worktreePath: null,
       turnDiffSummaries: [],
@@ -502,6 +505,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       archivedAt: null,
       updatedAt: "2026-03-29T00:00:10.000Z",
       latestTurn: previousLatestTurn,
+      queuedFollowUps: [],
       branch: null,
       worktreePath: null,
       turnDiffSummaries: [],
@@ -548,6 +552,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       archivedAt: null,
       updatedAt: "2026-03-29T00:00:10.000Z",
       latestTurn: previousLatestTurn,
+      queuedFollowUps: [],
       branch: null,
       worktreePath: null,
       turnDiffSummaries: [],

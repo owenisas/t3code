@@ -17,6 +17,7 @@ import {
   ThreadArchivedPayload,
   ThreadCreatedPayload,
   ThreadDeletedPayload,
+  ThreadFollowUpQueuedPayload,
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
@@ -260,6 +261,7 @@ export function projectEvent(
             branch: payload.branch,
             worktreePath: payload.worktreePath,
             latestTurn: null,
+            queuedFollowUps: [],
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             archivedAt: null,
@@ -408,15 +410,43 @@ export function projectEvent(
             )
           : [...thread.messages, message];
         const cappedMessages = messages.slice(-MAX_THREAD_MESSAGES);
+        const queuedFollowUps = thread.queuedFollowUps.filter(
+          (followUp) => followUp.messageId !== payload.messageId,
+        );
 
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             messages: cappedMessages,
+            queuedFollowUps,
             updatedAt: event.occurredAt,
           }),
         };
       });
+
+    case "thread.follow-up-queued":
+      return decodeForEvent(ThreadFollowUpQueuedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          const queuedFollowUps = [
+            ...thread.queuedFollowUps.filter((entry) => entry.id !== payload.followUp.id),
+            payload.followUp,
+          ].toSorted(
+            (left, right) =>
+              left.queuedAt.localeCompare(right.queuedAt) || left.id.localeCompare(right.id),
+          );
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              queuedFollowUps,
+              updatedAt: payload.updatedAt,
+            }),
+          };
+        }),
+      );
 
     case "thread.session-set":
       return Effect.gen(function* () {
@@ -611,6 +641,7 @@ export function projectEvent(
               messages,
               proposedPlans,
               activities,
+              queuedFollowUps: [],
               latestTurn,
               updatedAt: event.occurredAt,
             }),

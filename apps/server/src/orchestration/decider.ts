@@ -27,6 +27,10 @@ const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload">
   metadata: {},
 };
 
+function isThreadTurnRunning(thread: OrchestrationReadModel["threads"][number]): boolean {
+  return thread.session?.status === "running" && thread.session.activeTurnId !== null;
+}
+
 function withEventBase(
   input: Pick<OrchestrationCommand, "commandId"> & {
     readonly aggregateKind: OrchestrationEvent["aggregateKind"];
@@ -383,6 +387,94 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       };
       return [userMessageEvent, turnStartRequestedEvent];
+    }
+
+    case "thread.turn.steer": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (!isThreadTurnRunning(thread)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' does not have an active running turn to steer.`,
+        });
+      }
+      const userMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.message.messageId,
+          role: "user",
+          text: command.message.text,
+          attachments: command.message.attachments,
+          turnId: null,
+          streaming: false,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+      const steerRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        causationEventId: userMessageEvent.eventId,
+        type: "thread.turn-steer-requested",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.message.messageId,
+          ...(command.modelSelection !== undefined
+            ? { modelSelection: command.modelSelection }
+            : {}),
+          createdAt: command.createdAt,
+        },
+      };
+      return [userMessageEvent, steerRequestedEvent];
+    }
+
+    case "thread.follow-up.queue": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (!isThreadTurnRunning(thread)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' does not have an active running turn to queue behind.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.follow-up-queued",
+        payload: {
+          threadId: command.threadId,
+          followUp: {
+            id: command.followUpId,
+            messageId: command.message.messageId,
+            text: command.message.text,
+            attachments: command.message.attachments,
+            modelSelection: command.modelSelection ?? null,
+            queuedAt: command.createdAt,
+          },
+          updatedAt: command.createdAt,
+        },
+      };
     }
 
     case "thread.turn.interrupt": {

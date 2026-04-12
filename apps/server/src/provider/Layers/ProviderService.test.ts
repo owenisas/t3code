@@ -168,6 +168,11 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
       Effect.succeed({ threadId, turns: [] }),
   );
 
+  const steerTurn = vi.fn(
+    (_input: Parameters<ProviderAdapterShape<ProviderAdapterError>["steerTurn"]>[0]) =>
+      Effect.void as Effect.Effect<void, ProviderAdapterError>,
+  );
+
   const stopAll = vi.fn(
     (): Effect.Effect<void, ProviderAdapterError> =>
       Effect.sync(() => {
@@ -179,9 +184,11 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     provider,
     capabilities: {
       sessionModelSwitch: "in-session",
+      turnSteer: "native",
     },
     startSession,
     sendTurn,
+    steerTurn,
     interruptTurn,
     respondToRequest,
     respondToUserInput,

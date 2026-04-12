@@ -28,6 +28,7 @@ import {
 import {
   type ChatMessage,
   type Project,
+  type QueuedThreadFollowUp,
   type ProposedPlan,
   type SidebarThreadSummary,
   type Thread,
@@ -193,6 +194,21 @@ function mapProject(
   };
 }
 
+function mapQueuedFollowUp(
+  followUp: OrchestrationReadModel["threads"][number]["queuedFollowUps"][number],
+): QueuedThreadFollowUp {
+  return {
+    id: followUp.id,
+    messageId: followUp.messageId,
+    text: followUp.text,
+    attachments: followUp.attachments.map((attachment) => ({ ...attachment })),
+    modelSelection: followUp.modelSelection
+      ? normalizeModelSelection(followUp.modelSelection)
+      : null,
+    queuedAt: followUp.queuedAt,
+  };
+}
+
 function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): Thread {
   return {
     id: thread.id,
@@ -212,6 +228,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
+    queuedFollowUps: thread.queuedFollowUps.map(mapQueuedFollowUp),
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
@@ -244,6 +261,7 @@ function toThreadTurnState(thread: Thread): ThreadTurnState {
     ...(thread.pendingSourceProposedPlan
       ? { pendingSourceProposedPlan: thread.pendingSourceProposedPlan }
       : {}),
+    queuedFollowUps: thread.queuedFollowUps,
   };
 }
 
@@ -331,7 +349,8 @@ function threadTurnStatesEqual(left: ThreadTurnState | undefined, right: ThreadT
   return (
     left !== undefined &&
     left.latestTurn === right.latestTurn &&
-    left.pendingSourceProposedPlan === right.pendingSourceProposedPlan
+    left.pendingSourceProposedPlan === right.pendingSourceProposedPlan &&
+    left.queuedFollowUps === right.queuedFollowUps
   );
 }
 
@@ -1091,6 +1110,7 @@ function applyEnvironmentOrchestrationEvent(
           branch: event.payload.branch,
           worktreePath: event.payload.worktreePath,
           latestTurn: null,
+          queuedFollowUps: [],
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
           archivedAt: null,
@@ -1161,6 +1181,28 @@ function applyEnvironmentOrchestrationEvent(
         interactionMode: event.payload.interactionMode,
         pendingSourceProposedPlan: event.payload.sourceProposedPlan,
         updatedAt: event.occurredAt,
+      }));
+
+    case "thread.turn-steer-requested":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        ...(event.payload.modelSelection !== undefined
+          ? { modelSelection: normalizeModelSelection(event.payload.modelSelection) }
+          : {}),
+        updatedAt: event.occurredAt,
+      }));
+
+    case "thread.follow-up-queued":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        queuedFollowUps: [
+          ...thread.queuedFollowUps.filter((followUp) => followUp.id !== event.payload.followUp.id),
+          mapQueuedFollowUp(event.payload.followUp),
+        ].toSorted(
+          (left, right) =>
+            left.queuedAt.localeCompare(right.queuedAt) || left.id.localeCompare(right.id),
+        ),
+        updatedAt: event.payload.updatedAt,
       }));
 
     case "thread.turn-interrupt-requested": {
@@ -1272,6 +1314,9 @@ function applyEnvironmentOrchestrationEvent(
         return {
           ...thread,
           messages: cappedMessages,
+          queuedFollowUps: thread.queuedFollowUps.filter(
+            (followUp) => followUp.messageId !== event.payload.messageId,
+          ),
           turnDiffSummaries,
           latestTurn,
           updatedAt: event.occurredAt,
@@ -1425,6 +1470,7 @@ function applyEnvironmentOrchestrationEvent(
           messages,
           proposedPlans,
           activities,
+          queuedFollowUps: [],
           pendingSourceProposedPlan: undefined,
           latestTurn:
             latestCheckpoint === null

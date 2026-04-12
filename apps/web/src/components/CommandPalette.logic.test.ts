@@ -28,6 +28,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     archivedAt: null,
     updatedAt: "2026-03-01T00:00:00.000Z",
     latestTurn: null,
+    queuedFollowUps: [],
     branch: null,
     worktreePath: null,
     turnDiffSummaries: [],

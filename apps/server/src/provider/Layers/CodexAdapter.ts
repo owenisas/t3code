@@ -1503,6 +1503,32 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       catch: (cause) => toRequestError(threadId, "turn/interrupt", cause),
     });
 
+  const steerTurn: CodexAdapterShape["steerTurn"] = Effect.fn("steerTurn")(function* (input) {
+    const codexAttachments = yield* Effect.forEach(
+      input.attachments ?? [],
+      (attachment) =>
+        resolveAttachment(
+          {
+            threadId: input.threadId,
+            ...(input.input !== undefined ? { input: input.input } : {}),
+            attachments: input.attachments ?? [],
+          },
+          attachment,
+        ),
+      { concurrency: 1 },
+    );
+
+    yield* Effect.tryPromise({
+      try: () =>
+        manager.steerTurn({
+          threadId: input.threadId,
+          ...(input.input !== undefined ? { input: input.input } : {}),
+          ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
+        }),
+      catch: (cause) => toRequestError(input.threadId, "turn/steer", cause),
+    });
+  });
+
   const readThread: CodexAdapterShape["readThread"] = (threadId) =>
     Effect.tryPromise({
       try: () => manager.readThread(threadId),
@@ -1614,9 +1640,11 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      turnSteer: "native",
     },
     startSession,
     sendTurn,
+    steerTurn,
     interruptTurn,
     readThread,
     rollbackThread,

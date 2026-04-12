@@ -7,7 +7,7 @@ import {
   CodexModelOptions,
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
 } from "./model";
-import { ModelSelection } from "./orchestration";
+import { DEFAULT_THREAD_FOLLOW_UP_MODE, ModelSelection, ThreadFollowUpMode } from "./orchestration";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -27,6 +27,9 @@ export const ClientSettingsSchema = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  activeTurnFollowUpMode: ThreadFollowUpMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_FOLLOW_UP_MODE)),
+  ),
   sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_SORT_ORDER)),
   ),

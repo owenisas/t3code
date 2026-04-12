@@ -2,6 +2,7 @@ import {
   type ChatAttachment,
   CommandId,
   EventId,
+  type MessageId,
   type ModelSelection,
   type OrchestrationEvent,
   ProviderKind,
@@ -33,7 +34,9 @@ type ProviderIntentEvent = Extract<
     type:
       | "thread.runtime-mode-set"
       | "thread.turn-start-requested"
+      | "thread.turn-steer-requested"
       | "thread.turn-interrupt-requested"
+      | "thread.session-set"
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
       | "thread.session-stop-requested";
@@ -43,6 +46,13 @@ type ProviderIntentEvent = Extract<
 function toNonEmptyProviderInput(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+function isThreadTurnRunning(thread: {
+  readonly session: OrchestrationSession | null;
+  readonly queuedFollowUps?: ReadonlyArray<unknown>;
+}): boolean {
+  return thread.session?.status === "running" && thread.session.activeTurnId !== null;
 }
 
 function mapProviderSessionStatusToOrchestrationStatus(
@@ -216,6 +226,31 @@ const make = Effect.gen(function* () {
   const resolveThread = Effect.fn("resolveThread")(function* (threadId: ThreadId) {
     const readModel = yield* orchestrationEngine.getReadModel();
     return readModel.threads.find((entry) => entry.id === threadId);
+  });
+
+  const queueThreadFollowUp = Effect.fn("queueThreadFollowUp")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly followUpId: string;
+    readonly messageId: MessageId;
+    readonly messageText: string;
+    readonly attachments?: ReadonlyArray<ChatAttachment>;
+    readonly modelSelection?: ModelSelection;
+    readonly createdAt: string;
+  }) {
+    yield* orchestrationEngine.dispatch({
+      type: "thread.follow-up.queue",
+      commandId: serverCommandId("thread-follow-up-queue"),
+      threadId: input.threadId,
+      followUpId: input.followUpId,
+      message: {
+        messageId: input.messageId,
+        role: "user",
+        text: input.messageText,
+        attachments: [...(input.attachments ?? [])],
+      },
+      ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+      createdAt: input.createdAt,
+    });
   });
 
   const ensureSessionForThread = Effect.fn("ensureSessionForThread")(function* (
@@ -407,6 +442,37 @@ const make = Effect.gen(function* () {
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+    });
+  });
+
+  const drainNextQueuedFollowUp = Effect.fn("drainNextQueuedFollowUp")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly createdAt: string;
+  }) {
+    const thread = yield* resolveThread(input.threadId);
+    if (!thread || isThreadTurnRunning(thread)) {
+      return;
+    }
+    const nextFollowUp = thread.queuedFollowUps.at(0);
+    if (!nextFollowUp) {
+      return;
+    }
+    yield* orchestrationEngine.dispatch({
+      type: "thread.turn.start",
+      commandId: serverCommandId("thread-follow-up-dispatch"),
+      threadId: input.threadId,
+      message: {
+        messageId: nextFollowUp.messageId,
+        role: "user",
+        text: nextFollowUp.text,
+        attachments: [...nextFollowUp.attachments],
+      },
+      ...(nextFollowUp.modelSelection !== null
+        ? { modelSelection: nextFollowUp.modelSelection }
+        : {}),
+      runtimeMode: thread.runtimeMode,
+      interactionMode: thread.interactionMode,
+      createdAt: input.createdAt,
     });
   });
 
@@ -611,6 +677,87 @@ const make = Effect.gen(function* () {
     yield* providerService.interruptTurn({ threadId: event.payload.threadId });
   });
 
+  const processTurnSteerRequested = Effect.fn("processTurnSteerRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.turn-steer-requested" }>,
+  ) {
+    const thread = yield* resolveThread(event.payload.threadId);
+    if (!thread) {
+      return;
+    }
+    if (!isThreadTurnRunning(thread)) {
+      return yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.start.failed",
+        summary: "Provider turn steer failed",
+        detail: "No active provider turn is running on this thread.",
+        turnId: thread.latestTurn?.turnId ?? null,
+        createdAt: event.payload.createdAt,
+      });
+    }
+    const message = thread.messages.find((entry) => entry.id === event.payload.messageId);
+    if (!message || message.role !== "user") {
+      return yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.start.failed",
+        summary: "Provider turn steer failed",
+        detail: `User message '${event.payload.messageId}' was not found for steer request.`,
+        turnId: thread.latestTurn?.turnId ?? null,
+        createdAt: event.payload.createdAt,
+      });
+    }
+
+    const threadProvider: ProviderKind = Schema.is(ProviderKind)(thread.session?.providerName)
+      ? thread.session.providerName
+      : thread.modelSelection.provider;
+    const capabilities = yield* providerService.getCapabilities(threadProvider);
+
+    if (capabilities.turnSteer === "native") {
+      yield* providerService.steerTurn({
+        threadId: event.payload.threadId,
+        ...(toNonEmptyProviderInput(message.text) ? { input: message.text } : {}),
+        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+      });
+      return;
+    }
+
+    if (capabilities.turnSteer === "interrupt-restart") {
+      yield* queueThreadFollowUp({
+        threadId: event.payload.threadId,
+        followUpId: `steer:${event.payload.messageId}`,
+        messageId: event.payload.messageId,
+        messageText: message.text,
+        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+        ...(event.payload.modelSelection !== undefined
+          ? { modelSelection: event.payload.modelSelection }
+          : {}),
+        createdAt: event.payload.createdAt,
+      });
+      yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+      return;
+    }
+
+    return yield* appendProviderFailureActivity({
+      threadId: event.payload.threadId,
+      kind: "provider.turn.start.failed",
+      summary: "Provider turn steer failed",
+      detail: `Provider '${threadProvider}' does not support steering active turns.`,
+      turnId: thread.latestTurn?.turnId ?? null,
+      createdAt: event.payload.createdAt,
+    });
+  });
+
+  const processSessionSet = Effect.fn("processSessionSet")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.session-set" }>,
+  ) {
+    if (event.payload.session.status === "running") {
+      return;
+    }
+    yield* drainNextQueuedFollowUp({
+      threadId: event.payload.threadId,
+      createdAt: event.payload.session.updatedAt,
+    });
+  });
+
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.approval-response-requested" }>,
   ) {
@@ -759,8 +906,14 @@ const make = Effect.gen(function* () {
       case "thread.turn-start-requested":
         yield* processTurnStartRequested(event);
         return;
+      case "thread.turn-steer-requested":
+        yield* processTurnSteerRequested(event);
+        return;
       case "thread.turn-interrupt-requested":
         yield* processTurnInterruptRequested(event);
+        return;
+      case "thread.session-set":
+        yield* processSessionSet(event);
         return;
       case "thread.approval-response-requested":
         yield* processApprovalResponseRequested(event);
@@ -794,7 +947,9 @@ const make = Effect.gen(function* () {
       if (
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.turn-start-requested" ||
+        event.type === "thread.turn-steer-requested" ||
         event.type === "thread.turn-interrupt-requested" ||
+        event.type === "thread.session-set" ||
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||
         event.type === "thread.session-stop-requested"

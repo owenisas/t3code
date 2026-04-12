@@ -17,6 +17,7 @@ import {
   type ProjectionThreadMessage,
   ProjectionThreadMessageRepository,
 } from "../../persistence/Services/ProjectionThreadMessages.ts";
+import { ProjectionThreadQueuedFollowUpRepository } from "../../persistence/Services/ProjectionThreadQueuedFollowUps.ts";
 import {
   type ProjectionThreadProposedPlan,
   ProjectionThreadProposedPlanRepository,
@@ -32,6 +33,7 @@ import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/Projec
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
 import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
+import { ProjectionThreadQueuedFollowUpRepositoryLive } from "../../persistence/Layers/ProjectionThreadQueuedFollowUps.ts";
 import { ProjectionThreadProposedPlanRepositoryLive } from "../../persistence/Layers/ProjectionThreadProposedPlans.ts";
 import { ProjectionThreadSessionRepositoryLive } from "../../persistence/Layers/ProjectionThreadSessions.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
@@ -52,6 +54,7 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   projects: "projection.projects",
   threads: "projection.threads",
   threadMessages: "projection.thread-messages",
+  threadQueuedFollowUps: "projection.thread-queued-follow-ups",
   threadProposedPlans: "projection.thread-proposed-plans",
   threadActivities: "projection.thread-activities",
   threadSessions: "projection.thread-sessions",
@@ -363,6 +366,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionProjectRepository = yield* ProjectionProjectRepository;
     const projectionThreadRepository = yield* ProjectionThreadRepository;
     const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
+    const projectionThreadQueuedFollowUpRepository =
+      yield* ProjectionThreadQueuedFollowUpRepository;
     const projectionThreadProposedPlanRepository = yield* ProjectionThreadProposedPlanRepository;
     const projectionThreadActivityRepository = yield* ProjectionThreadActivityRepository;
     const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
@@ -553,6 +558,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         }
 
         case "thread.message-sent":
+        case "thread.follow-up-queued":
         case "thread.proposed-plan-upserted":
         case "thread.activity-appended": {
           const existingRow = yield* projectionThreadRepository.getById({
@@ -656,6 +662,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             createdAt: previousMessage?.createdAt ?? event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
           });
+          yield* projectionThreadQueuedFollowUpRepository.deleteByMessageId({
+            messageId: event.payload.messageId,
+          });
           return;
         }
 
@@ -689,6 +698,46 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             event.payload.threadId,
             collectThreadAttachmentRelativePaths(event.payload.threadId, keptRows),
           );
+          return;
+        }
+
+        default:
+          return;
+      }
+    });
+
+    const applyThreadQueuedFollowUpsProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyThreadQueuedFollowUpsProjection",
+    )(function* (event) {
+      switch (event.type) {
+        case "thread.follow-up-queued": {
+          const attachments = yield* materializeAttachmentsForProjection({
+            attachments: event.payload.followUp.attachments,
+          });
+          yield* projectionThreadQueuedFollowUpRepository.upsert({
+            followUpId: event.payload.followUp.id,
+            threadId: event.payload.threadId,
+            messageId: event.payload.followUp.messageId,
+            text: event.payload.followUp.text,
+            attachments: [...attachments],
+            modelSelection: event.payload.followUp.modelSelection,
+            queuedAt: event.payload.followUp.queuedAt,
+          });
+          return;
+        }
+
+        case "thread.message-sent": {
+          yield* projectionThreadQueuedFollowUpRepository.deleteByMessageId({
+            messageId: event.payload.messageId,
+          });
+          return;
+        }
+
+        case "thread.deleted":
+        case "thread.reverted": {
+          yield* projectionThreadQueuedFollowUpRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
           return;
         }
 
@@ -1173,6 +1222,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         apply: applyThreadMessagesProjection,
       },
       {
+        name: ORCHESTRATION_PROJECTOR_NAMES.threadQueuedFollowUps,
+        apply: applyThreadQueuedFollowUpsProjection,
+      },
+      {
         name: ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans,
         apply: applyThreadProposedPlansProjection,
       },
@@ -1297,6 +1350,7 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionProjectRepositoryLive),
   Layer.provideMerge(ProjectionThreadRepositoryLive),
   Layer.provideMerge(ProjectionThreadMessageRepositoryLive),
+  Layer.provideMerge(ProjectionThreadQueuedFollowUpRepositoryLive),
   Layer.provideMerge(ProjectionThreadProposedPlanRepositoryLive),
   Layer.provideMerge(ProjectionThreadActivityRepositoryLive),
   Layer.provideMerge(ProjectionThreadSessionRepositoryLive),

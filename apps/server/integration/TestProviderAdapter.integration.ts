@@ -467,6 +467,9 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       });
     };
 
+    const steerTurn: ProviderAdapterShape<ProviderAdapterError>["steerTurn"] = (_input) =>
+      Effect.void;
+
     const stopAll: ProviderAdapterShape<ProviderAdapterError>["stopAll"] = () =>
       Effect.sync(() => {
         sessions.clear();
@@ -476,9 +479,11 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       provider,
       capabilities: {
         sessionModelSwitch: "in-session",
+        turnSteer: "native",
       },
       startSession,
       sendTurn,
+      steerTurn,
       interruptTurn,
       respondToRequest,
       respondToUserInput,

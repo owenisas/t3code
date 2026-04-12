@@ -69,6 +69,9 @@ export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
+export const ThreadFollowUpMode = Schema.Literals(["steer", "queue"]);
+export type ThreadFollowUpMode = typeof ThreadFollowUpMode.Type;
+export const DEFAULT_THREAD_FOLLOW_UP_MODE: ThreadFollowUpMode = "steer";
 export const ProviderRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
@@ -274,6 +277,18 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+export const OrchestrationQueuedFollowUp = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  messageId: MessageId,
+  text: Schema.String,
+  attachments: Schema.Array(ChatAttachment),
+  modelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  queuedAt: IsoDateTime,
+});
+export type OrchestrationQueuedFollowUp = typeof OrchestrationQueuedFollowUp.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -286,6 +301,9 @@ export const OrchestrationThread = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
+  queuedFollowUps: Schema.Array(OrchestrationQueuedFollowUp).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -459,6 +477,64 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadTurnSteerCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.steer"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  message: Schema.Struct({
+    messageId: MessageId,
+    role: Schema.Literal("user"),
+    text: Schema.String,
+    attachments: Schema.Array(ChatAttachment),
+  }),
+  modelSelection: Schema.optional(ModelSelection),
+  createdAt: IsoDateTime,
+});
+
+const ClientThreadTurnSteerCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.steer"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  message: Schema.Struct({
+    messageId: MessageId,
+    role: Schema.Literal("user"),
+    text: Schema.String,
+    attachments: Schema.Array(UploadChatAttachment),
+  }),
+  modelSelection: Schema.optional(ModelSelection),
+  createdAt: IsoDateTime,
+});
+
+const ThreadFollowUpQueueCommand = Schema.Struct({
+  type: Schema.Literal("thread.follow-up.queue"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  followUpId: TrimmedNonEmptyString,
+  message: Schema.Struct({
+    messageId: MessageId,
+    role: Schema.Literal("user"),
+    text: Schema.String,
+    attachments: Schema.Array(ChatAttachment),
+  }),
+  modelSelection: Schema.optional(ModelSelection),
+  createdAt: IsoDateTime,
+});
+
+const ClientThreadFollowUpQueueCommand = Schema.Struct({
+  type: Schema.Literal("thread.follow-up.queue"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  followUpId: TrimmedNonEmptyString,
+  message: Schema.Struct({
+    messageId: MessageId,
+    role: Schema.Literal("user"),
+    text: Schema.String,
+    attachments: Schema.Array(UploadChatAttachment),
+  }),
+  modelSelection: Schema.optional(ModelSelection),
+  createdAt: IsoDateTime,
+});
+
 const ThreadTurnInterruptCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.interrupt"),
   commandId: CommandId,
@@ -512,6 +588,8 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
+  ThreadTurnSteerCommand,
+  ThreadFollowUpQueueCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
@@ -533,6 +611,8 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
+  ClientThreadTurnSteerCommand,
+  ClientThreadFollowUpQueueCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
@@ -636,7 +716,9 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.interaction-mode-set",
   "thread.message-sent",
   "thread.turn-start-requested",
+  "thread.turn-steer-requested",
   "thread.turn-interrupt-requested",
+  "thread.follow-up-queued",
   "thread.approval-response-requested",
   "thread.user-input-response-requested",
   "thread.checkpoint-revert-requested",
@@ -758,10 +840,23 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadTurnSteerRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  modelSelection: Schema.optional(ModelSelection),
+  createdAt: IsoDateTime,
+});
+
 export const ThreadTurnInterruptRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   turnId: Schema.optional(TurnId),
   createdAt: IsoDateTime,
+});
+
+export const ThreadFollowUpQueuedPayload = Schema.Struct({
+  threadId: ThreadId,
+  followUp: OrchestrationQueuedFollowUp,
+  updatedAt: IsoDateTime,
 });
 
 export const ThreadApprovalResponseRequestedPayload = Schema.Struct({
@@ -904,8 +999,18 @@ export const OrchestrationEvent = Schema.Union([
   }),
   Schema.Struct({
     ...EventBaseFields,
+    type: Schema.Literal("thread.turn-steer-requested"),
+    payload: ThreadTurnSteerRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
     type: Schema.Literal("thread.turn-interrupt-requested"),
     payload: ThreadTurnInterruptRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.follow-up-queued"),
+    payload: ThreadFollowUpQueuedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
+import type { ThreadFollowUpMode } from "@t3tools/contracts";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -22,8 +23,12 @@ interface ComposerPrimaryActionsProps {
   isConnecting: boolean;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
+  runningFollowUpMode: ThreadFollowUpMode;
+  queuedFollowUpCount: number;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
+  onQueueFollowUp: () => void;
+  onSteerFollowUp: () => void;
   onImplementPlanInNewThread: () => void;
 }
 
@@ -55,8 +60,12 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isConnecting,
   isPreparingWorktree,
   hasSendableContent,
+  runningFollowUpMode,
+  queuedFollowUpCount,
   onPreviousPendingQuestion,
   onInterrupt,
+  onQueueFollowUp,
+  onSteerFollowUp,
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
   if (pendingAction) {
@@ -107,6 +116,54 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   }
 
   if (isRunning) {
+    if (hasSendableContent && !isSendBusy && !isConnecting) {
+      const primaryLabel = runningFollowUpMode === "queue" ? "Queue" : "Steer";
+      const onPrimaryFollowUp = runningFollowUpMode === "queue" ? onQueueFollowUp : onSteerFollowUp;
+      return (
+        <div className="flex items-center justify-end gap-2">
+          {queuedFollowUpCount > 0 ? (
+            <span className="text-muted-foreground text-xs">
+              {queuedFollowUpCount === 1
+                ? "1 follow-up queued"
+                : `${queuedFollowUpCount} follow-ups queued`}
+            </span>
+          ) : null}
+          <Button
+            type="submit"
+            size="sm"
+            className={cn("rounded-l-full rounded-r-none", compact ? "px-3" : "px-4")}
+          >
+            {primaryLabel}
+          </Button>
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button
+                  size="sm"
+                  variant="default"
+                  className="rounded-l-none rounded-r-full border-l-white/12 px-2"
+                  aria-label="Follow-up actions"
+                />
+              }
+            >
+              <ChevronDownIcon className="size-3.5" />
+            </MenuTrigger>
+            <MenuPopup align="end" side="top">
+              <MenuItem onClick={() => void onPrimaryFollowUp()}>{primaryLabel}</MenuItem>
+              <MenuItem
+                onClick={() =>
+                  void (runningFollowUpMode === "queue" ? onSteerFollowUp() : onQueueFollowUp())
+                }
+              >
+                {runningFollowUpMode === "queue" ? "Steer instead" : "Queue instead"}
+              </MenuItem>
+              <MenuItem onClick={() => void onInterrupt()}>Stop current turn</MenuItem>
+            </MenuPopup>
+          </Menu>
+        </div>
+      );
+    }
+
     return (
       <button
         type="button"

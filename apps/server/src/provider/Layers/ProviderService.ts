@@ -17,6 +17,7 @@ import {
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
   ProviderSendTurnInput,
+  ProviderSteerTurnInput,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
   type ProviderRuntimeEvent,
@@ -487,6 +488,54 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const steerTurn: ProviderServiceShape["steerTurn"] = Effect.fn("steerTurn")(function* (rawInput) {
+    const parsed = yield* decodeInputOrValidationError({
+      operation: "ProviderService.steerTurn",
+      schema: ProviderSteerTurnInput,
+      payload: rawInput,
+    });
+
+    const input = {
+      ...parsed,
+      attachments: parsed.attachments ?? [],
+    };
+    if (!input.input && input.attachments.length === 0) {
+      return yield* toValidationError(
+        "ProviderService.steerTurn",
+        "Either input text or at least one attachment is required",
+      );
+    }
+    let metricProvider = "unknown";
+    return yield* Effect.gen(function* () {
+      const routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
+        operation: "ProviderService.steerTurn",
+        allowRecovery: true,
+      });
+      metricProvider = routed.adapter.provider;
+      yield* Effect.annotateCurrentSpan({
+        "provider.operation": "steer-turn",
+        "provider.kind": routed.adapter.provider,
+        "provider.thread_id": input.threadId,
+        "provider.attachment_count": input.attachments.length,
+      });
+      yield* routed.adapter.steerTurn(input);
+      yield* analytics.record("provider.turn.steered", {
+        provider: routed.adapter.provider,
+        attachmentCount: input.attachments.length,
+        hasInput: typeof input.input === "string" && input.input.trim().length > 0,
+      });
+    }).pipe(
+      withMetrics({
+        counter: providerTurnsTotal,
+        outcomeAttributes: () =>
+          providerMetricAttributes(metricProvider, {
+            operation: "steer",
+          }),
+      }),
+    );
+  });
+
   const respondToRequest: ProviderServiceShape["respondToRequest"] = Effect.fn("respondToRequest")(
     function* (rawInput) {
       const input = yield* decodeInputOrValidationError({
@@ -733,6 +782,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   return {
     startSession,
     sendTurn,
+    steerTurn,
     interruptTurn,
     respondToRequest,
     respondToUserInput,

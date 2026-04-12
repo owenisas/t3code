@@ -92,6 +92,15 @@ export interface Project {
   scripts: ProjectScript[];
 }
 
+export interface QueuedThreadFollowUp {
+  id: string;
+  messageId: MessageId;
+  text: string;
+  attachments: ChatAttachment[];
+  modelSelection: ModelSelection | null;
+  queuedAt: string;
+}
+
 export interface Thread {
   id: ThreadId;
   environmentId: EnvironmentId;
@@ -110,6 +119,7 @@ export interface Thread {
   updatedAt?: string | undefined;
   latestTurn: OrchestrationLatestTurn | null;
   pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
+  queuedFollowUps: QueuedThreadFollowUp[];
   branch: string | null;
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
@@ -136,6 +146,7 @@ export interface ThreadShell {
 export interface ThreadTurnState {
   latestTurn: OrchestrationLatestTurn | null;
   pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
+  queuedFollowUps: QueuedThreadFollowUp[];
 }
 
 export interface SidebarThreadSummary {

@@ -16,7 +16,9 @@ import {
   ThreadRevertedPayload as ContractsThreadRevertedPayloadSchema,
   ThreadActivityAppendedPayload as ContractsThreadActivityAppendedPayloadSchema,
   ThreadTurnStartRequestedPayload as ContractsThreadTurnStartRequestedPayloadSchema,
+  ThreadTurnSteerRequestedPayload as ContractsThreadTurnSteerRequestedPayloadSchema,
   ThreadTurnInterruptRequestedPayload as ContractsThreadTurnInterruptRequestedPayloadSchema,
+  ThreadFollowUpQueuedPayload as ContractsThreadFollowUpQueuedPayloadSchema,
   ThreadApprovalResponseRequestedPayload as ContractsThreadApprovalResponseRequestedPayloadSchema,
   ThreadCheckpointRevertRequestedPayload as ContractsThreadCheckpointRevertRequestedPayloadSchema,
   ThreadSessionStopRequestedPayload as ContractsThreadSessionStopRequestedPayloadSchema,
@@ -43,8 +45,10 @@ export const ThreadRevertedPayload = ContractsThreadRevertedPayloadSchema;
 export const ThreadActivityAppendedPayload = ContractsThreadActivityAppendedPayloadSchema;
 
 export const ThreadTurnStartRequestedPayload = ContractsThreadTurnStartRequestedPayloadSchema;
+export const ThreadTurnSteerRequestedPayload = ContractsThreadTurnSteerRequestedPayloadSchema;
 export const ThreadTurnInterruptRequestedPayload =
   ContractsThreadTurnInterruptRequestedPayloadSchema;
+export const ThreadFollowUpQueuedPayload = ContractsThreadFollowUpQueuedPayloadSchema;
 export const ThreadApprovalResponseRequestedPayload =
   ContractsThreadApprovalResponseRequestedPayloadSchema;
 export const ThreadCheckpointRevertRequestedPayload =

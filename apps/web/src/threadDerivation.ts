@@ -14,6 +14,7 @@ const EMPTY_MESSAGES: ChatMessage[] = [];
 const EMPTY_ACTIVITIES: Thread["activities"] = [];
 const EMPTY_PROPOSED_PLANS: ProposedPlan[] = [];
 const EMPTY_TURN_DIFF_SUMMARIES: TurnDiffSummary[] = [];
+const EMPTY_QUEUED_FOLLOW_UPS: Thread["queuedFollowUps"] = [];
 const EMPTY_MESSAGE_MAP: Record<MessageId, ChatMessage> = {};
 const EMPTY_ACTIVITY_MAP: Record<string, Thread["activities"][number]> = {};
 const EMPTY_PROPOSED_PLAN_MAP: Record<string, ProposedPlan> = {};
@@ -132,6 +133,7 @@ export function getThreadFromEnvironmentState(
     session,
     latestTurn: turnState?.latestTurn ?? null,
     pendingSourceProposedPlan: turnState?.pendingSourceProposedPlan,
+    queuedFollowUps: turnState?.queuedFollowUps ?? EMPTY_QUEUED_FOLLOW_UPS,
     messages,
     activities,
     proposedPlans,
