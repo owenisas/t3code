@@ -25,6 +25,7 @@ const emptySnapshot = (
         deletedAt: null,
       },
     ],
+    scheduledJobs: [],
     threads: [],
     providerSessions: [],
     providerStatuses: [],

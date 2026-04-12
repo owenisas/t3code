@@ -10,6 +10,8 @@ import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../per
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { ProjectionPendingApprovalRepository } from "../../persistence/Services/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
+import { ProjectionScheduledJobRepository } from "../../persistence/Services/ProjectionScheduledJobs.ts";
+import { ProjectionScheduledJobRunRepository } from "../../persistence/Services/ProjectionScheduledJobRuns.ts";
 import { ProjectionStateRepository } from "../../persistence/Services/ProjectionState.ts";
 import { ProjectionThreadActivityRepository } from "../../persistence/Services/ProjectionThreadActivities.ts";
 import { type ProjectionThreadActivity } from "../../persistence/Services/ProjectionThreadActivities.ts";
@@ -30,6 +32,8 @@ import {
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
+import { ProjectionScheduledJobRepositoryLive } from "../../persistence/Layers/ProjectionScheduledJobs.ts";
+import { ProjectionScheduledJobRunRepositoryLive } from "../../persistence/Layers/ProjectionScheduledJobRuns.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
 import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
@@ -52,6 +56,8 @@ import {
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
   projects: "projection.projects",
+  scheduledJobs: "projection.scheduled-jobs",
+  scheduledJobRuns: "projection.scheduled-job-runs",
   threads: "projection.threads",
   threadMessages: "projection.thread-messages",
   threadQueuedFollowUps: "projection.thread-queued-follow-ups",
@@ -364,6 +370,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const eventStore = yield* OrchestrationEventStore;
     const projectionStateRepository = yield* ProjectionStateRepository;
     const projectionProjectRepository = yield* ProjectionProjectRepository;
+    const projectionScheduledJobRepository = yield* ProjectionScheduledJobRepository;
+    const projectionScheduledJobRunRepository = yield* ProjectionScheduledJobRunRepository;
     const projectionThreadRepository = yield* ProjectionThreadRepository;
     const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
     const projectionThreadQueuedFollowUpRepository =
@@ -428,6 +436,198 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existingRow.value,
             deletedAt: event.payload.deletedAt,
             updatedAt: event.payload.deletedAt,
+          });
+          return;
+        }
+
+        default:
+          return;
+      }
+    });
+
+    const applyScheduledJobsProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyScheduledJobsProjection",
+    )(function* (event, _attachmentSideEffects) {
+      switch (event.type) {
+        case "scheduled-job.created":
+          yield* projectionScheduledJobRepository.upsert({
+            jobId: event.payload.job.id,
+            projectId: event.payload.job.projectId,
+            title: event.payload.job.title,
+            prompt: event.payload.job.prompt,
+            modelSelection: event.payload.job.modelSelection,
+            runtimeMode: event.payload.job.runtimeMode,
+            interactionMode: event.payload.job.interactionMode,
+            status: event.payload.job.status,
+            schedule: event.payload.job.schedule,
+            lastRunAt: event.payload.job.lastRunAt,
+            nextRunAt: event.payload.job.nextRunAt,
+            lastOutcome: event.payload.job.lastOutcome,
+            lastThreadId: event.payload.job.lastThreadId,
+            lastError: event.payload.job.lastError,
+            activeRunId: event.payload.job.activeRun?.id ?? null,
+            createdAt: event.payload.job.createdAt,
+            updatedAt: event.payload.job.updatedAt,
+            deletedAt: event.payload.job.deletedAt,
+          });
+          return;
+
+        case "scheduled-job.updated": {
+          const existingRow = yield* projectionScheduledJobRepository.getById({
+            jobId: event.payload.jobId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionScheduledJobRepository.upsert({
+            ...existingRow.value,
+            ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+            ...(event.payload.prompt !== undefined ? { prompt: event.payload.prompt } : {}),
+            ...(event.payload.modelSelection !== undefined
+              ? { modelSelection: event.payload.modelSelection }
+              : {}),
+            ...(event.payload.runtimeMode !== undefined
+              ? { runtimeMode: event.payload.runtimeMode }
+              : {}),
+            ...(event.payload.interactionMode !== undefined
+              ? { interactionMode: event.payload.interactionMode }
+              : {}),
+            ...(event.payload.schedule !== undefined ? { schedule: event.payload.schedule } : {}),
+            nextRunAt: event.payload.nextRunAt,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "scheduled-job.paused": {
+          const existingRow = yield* projectionScheduledJobRepository.getById({
+            jobId: event.payload.jobId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionScheduledJobRepository.upsert({
+            ...existingRow.value,
+            status: "paused",
+            nextRunAt: null,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "scheduled-job.resumed": {
+          const existingRow = yield* projectionScheduledJobRepository.getById({
+            jobId: event.payload.jobId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionScheduledJobRepository.upsert({
+            ...existingRow.value,
+            status: "active",
+            nextRunAt: event.payload.nextRunAt,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "scheduled-job.deleted": {
+          const existingRow = yield* projectionScheduledJobRepository.getById({
+            jobId: event.payload.jobId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionScheduledJobRepository.upsert({
+            ...existingRow.value,
+            activeRunId: null,
+            deletedAt: event.payload.deletedAt,
+            nextRunAt: null,
+            updatedAt: event.payload.deletedAt,
+          });
+          return;
+        }
+
+        case "scheduled-job.run-started": {
+          const existingRow = yield* projectionScheduledJobRepository.getById({
+            jobId: event.payload.jobId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionScheduledJobRepository.upsert({
+            ...existingRow.value,
+            activeRunId: event.payload.run.id,
+            lastThreadId: event.payload.run.threadId,
+            lastError: null,
+            nextRunAt: event.payload.nextRunAt,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "scheduled-job.run-completed": {
+          const existingRow = yield* projectionScheduledJobRepository.getById({
+            jobId: event.payload.jobId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          const existingRun = existingRow.value.activeRunId
+            ? yield* projectionScheduledJobRunRepository.getById({
+                runId: existingRow.value.activeRunId,
+              })
+            : Option.none();
+          yield* projectionScheduledJobRepository.upsert({
+            ...existingRow.value,
+            activeRunId: null,
+            lastRunAt: Option.isSome(existingRun)
+              ? existingRun.value.startedAt
+              : existingRow.value.lastRunAt,
+            lastOutcome: event.payload.outcome,
+            lastThreadId: Option.isSome(existingRun)
+              ? existingRun.value.threadId
+              : existingRow.value.lastThreadId,
+            lastError: event.payload.error,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        default:
+          return;
+      }
+    });
+
+    const applyScheduledJobRunsProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyScheduledJobRunsProjection",
+    )(function* (event, _attachmentSideEffects) {
+      switch (event.type) {
+        case "scheduled-job.run-started":
+          yield* projectionScheduledJobRunRepository.upsert({
+            runId: event.payload.run.id,
+            jobId: event.payload.run.jobId,
+            threadId: event.payload.run.threadId,
+            trigger: event.payload.run.trigger,
+            startedAt: event.payload.run.startedAt,
+            completedAt: event.payload.run.completedAt,
+            outcome: event.payload.run.outcome,
+            error: event.payload.run.error,
+          });
+          return;
+
+        case "scheduled-job.run-completed": {
+          const existingRow = yield* projectionScheduledJobRunRepository.getById({
+            runId: event.payload.runId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionScheduledJobRunRepository.upsert({
+            ...existingRow.value,
+            completedAt: event.payload.completedAt,
+            outcome: event.payload.outcome,
+            error: event.payload.error,
           });
           return;
         }
@@ -1218,6 +1418,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         apply: applyProjectsProjection,
       },
       {
+        name: ORCHESTRATION_PROJECTOR_NAMES.scheduledJobs,
+        apply: applyScheduledJobsProjection,
+      },
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.scheduledJobRuns,
+        apply: applyScheduledJobRunsProjection,
+      },
+      {
         name: ORCHESTRATION_PROJECTOR_NAMES.threadMessages,
         apply: applyThreadMessagesProjection,
       },
@@ -1348,6 +1556,8 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   makeOrchestrationProjectionPipeline(),
 ).pipe(
   Layer.provideMerge(ProjectionProjectRepositoryLive),
+  Layer.provideMerge(ProjectionScheduledJobRepositoryLive),
+  Layer.provideMerge(ProjectionScheduledJobRunRepositoryLive),
   Layer.provideMerge(ProjectionThreadRepositoryLive),
   Layer.provideMerge(ProjectionThreadMessageRepositoryLive),
   Layer.provideMerge(ProjectionThreadQueuedFollowUpRepositoryLive),

@@ -70,6 +70,8 @@ function makeSidebarThreadSummary(
 
 function makeEmptyEnvironmentState(): EnvironmentState {
   return {
+    scheduledJobIds: [],
+    scheduledJobById: {},
     projectIds: [],
     projectById: {},
     threadIds: [],
@@ -167,6 +169,8 @@ function makeFixtureState(): AppState {
 
   const primaryEnvState: EnvironmentState = {
     ...makeEmptyEnvironmentState(),
+    scheduledJobIds: [],
+    scheduledJobById: {},
     projectIds: [sharedProjectPrimaryId, localOnlyProjectId],
     projectById: {
       [sharedProjectPrimaryId]: sharedProjectPrimary,
@@ -186,6 +190,8 @@ function makeFixtureState(): AppState {
 
   const remoteEnvState: EnvironmentState = {
     ...makeEmptyEnvironmentState(),
+    scheduledJobIds: [],
+    scheduledJobById: {},
     projectIds: [sharedProjectRemoteId, remoteOnlyProjectId],
     projectById: {
       [sharedProjectRemoteId]: sharedProjectRemote,

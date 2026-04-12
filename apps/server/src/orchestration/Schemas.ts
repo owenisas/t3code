@@ -2,6 +2,13 @@ import {
   ProjectCreatedPayload as ContractsProjectCreatedPayloadSchema,
   ProjectMetaUpdatedPayload as ContractsProjectMetaUpdatedPayloadSchema,
   ProjectDeletedPayload as ContractsProjectDeletedPayloadSchema,
+  ScheduledJobCreatedPayload as ContractsScheduledJobCreatedPayloadSchema,
+  ScheduledJobUpdatedPayload as ContractsScheduledJobUpdatedPayloadSchema,
+  ScheduledJobPausedPayload as ContractsScheduledJobPausedPayloadSchema,
+  ScheduledJobResumedPayload as ContractsScheduledJobResumedPayloadSchema,
+  ScheduledJobDeletedPayload as ContractsScheduledJobDeletedPayloadSchema,
+  ScheduledJobRunStartedPayload as ContractsScheduledJobRunStartedPayloadSchema,
+  ScheduledJobRunCompletedPayload as ContractsScheduledJobRunCompletedPayloadSchema,
   ThreadCreatedPayload as ContractsThreadCreatedPayloadSchema,
   ThreadArchivedPayload as ContractsThreadArchivedPayloadSchema,
   ThreadMetaUpdatedPayload as ContractsThreadMetaUpdatedPayloadSchema,
@@ -28,6 +35,13 @@ import {
 export const ProjectCreatedPayload = ContractsProjectCreatedPayloadSchema;
 export const ProjectMetaUpdatedPayload = ContractsProjectMetaUpdatedPayloadSchema;
 export const ProjectDeletedPayload = ContractsProjectDeletedPayloadSchema;
+export const ScheduledJobCreatedPayload = ContractsScheduledJobCreatedPayloadSchema;
+export const ScheduledJobUpdatedPayload = ContractsScheduledJobUpdatedPayloadSchema;
+export const ScheduledJobPausedPayload = ContractsScheduledJobPausedPayloadSchema;
+export const ScheduledJobResumedPayload = ContractsScheduledJobResumedPayloadSchema;
+export const ScheduledJobDeletedPayload = ContractsScheduledJobDeletedPayloadSchema;
+export const ScheduledJobRunStartedPayload = ContractsScheduledJobRunStartedPayloadSchema;
+export const ScheduledJobRunCompletedPayload = ContractsScheduledJobRunCompletedPayloadSchema;
 
 export const ThreadCreatedPayload = ContractsThreadCreatedPayloadSchema;
 export const ThreadArchivedPayload = ContractsThreadArchivedPayloadSchema;

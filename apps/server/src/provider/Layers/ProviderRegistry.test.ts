@@ -535,6 +535,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         const providers = [
           {
             provider: "codex",
+            schedulingSupport: "external-info",
             status: "ready",
             enabled: true,
             installed: true,
@@ -547,6 +548,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           },
           {
             provider: "claudeAgent",
+            schedulingSupport: "external-info",
             status: "warning",
             enabled: true,
             installed: true,

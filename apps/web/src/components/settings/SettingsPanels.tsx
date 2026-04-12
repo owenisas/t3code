@@ -1,17 +1,30 @@
 import {
   ArchiveIcon,
   ArchiveX,
+  CalendarClockIcon,
+  CheckCircle2Icon,
   ChevronDownIcon,
+  Clock3Icon,
   InfoIcon,
   LoaderIcon,
   PlusIcon,
   RefreshCwIcon,
+  PlayIcon,
+  PencilIcon,
+  PauseIcon,
+  Trash2Icon,
   XIcon,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import {
+  CommandId,
+  MessageId,
   PROVIDER_DISPLAY_NAMES,
+  ScheduledJobId,
+  ScheduledJobRunId,
+  ThreadId,
   type ScopedThreadRef,
   type ProviderKind,
   type ServerProvider,
@@ -46,20 +59,24 @@ import {
   resolveAppModelSelectionState,
 } from "../../modelSelection";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
+import { ensureEnvironmentApi } from "../../environmentApi";
 import { useShallow } from "zustand/react/shallow";
 import {
   selectProjectsAcrossEnvironments,
+  selectScheduledJobsAcrossEnvironments,
   selectThreadShellsAcrossEnvironments,
   useStore,
 } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "../../lib/utils";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -1380,6 +1397,631 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
+    </SettingsPageContainer>
+  );
+}
+
+type ScheduledJobFormState = {
+  projectId: string;
+  title: string;
+  prompt: string;
+  provider: ProviderKind;
+  model: string;
+  runtimeMode: "approval-required" | "auto-accept-edits" | "full-access";
+  interactionMode: "default" | "plan";
+  intervalHours: string;
+};
+
+const DEFAULT_SCHEDULED_JOB_FORM: ScheduledJobFormState = {
+  projectId: "",
+  title: "",
+  prompt: "",
+  provider: "codex",
+  model: "",
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  intervalHours: "24",
+};
+
+function toScheduledJobFormState(
+  job: ReturnType<typeof selectScheduledJobsAcrossEnvironments>[number],
+): ScheduledJobFormState {
+  return {
+    projectId: job.projectId,
+    title: job.title,
+    prompt: job.prompt,
+    provider: job.modelSelection.provider,
+    model: job.modelSelection.model,
+    runtimeMode: job.runtimeMode,
+    interactionMode: job.interactionMode,
+    intervalHours: String(Math.max(1, Math.round(job.schedule.intervalMinutes / 60))),
+  };
+}
+
+function providerModelOptionsByProvider(
+  providers: ReadonlyArray<ServerProvider>,
+): Record<ProviderKind, ReadonlyArray<ServerProviderModel>> {
+  return {
+    codex: providers.find((provider) => provider.provider === "codex")?.models ?? [],
+    claudeAgent: providers.find((provider) => provider.provider === "claudeAgent")?.models ?? [],
+  };
+}
+
+function nextScheduledJobModel(
+  provider: ProviderKind,
+  modelsByProvider: Record<ProviderKind, ReadonlyArray<ServerProviderModel>>,
+  currentModel: string,
+): string {
+  const providerModels = modelsByProvider[provider];
+  if (providerModels.some((model) => model.slug === currentModel)) {
+    return currentModel;
+  }
+  return providerModels[0]?.slug ?? "";
+}
+
+function formatScheduledJobInterval(
+  job: ReturnType<typeof selectScheduledJobsAcrossEnvironments>[number],
+) {
+  const hours = Math.max(1, Math.round(job.schedule.intervalMinutes / 60));
+  return hours === 1 ? "Every hour" : `Every ${hours} hours`;
+}
+
+function scheduledJobStatusLabel(status: "active" | "paused") {
+  return status === "active" ? "Active" : "Paused";
+}
+
+function scheduledJobOutcomeLabel(outcome: "succeeded" | "failed" | "interrupted" | null) {
+  switch (outcome) {
+    case "succeeded":
+      return "Succeeded";
+    case "failed":
+      return "Failed";
+    case "interrupted":
+      return "Interrupted";
+    default:
+      return "No runs yet";
+  }
+}
+
+export function ScheduledJobsPanel() {
+  const navigate = useNavigate();
+  const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
+  const jobs = useStore(useShallow(selectScheduledJobsAcrossEnvironments));
+  const providers = useServerProviders();
+  const [formState, setFormState] = useState<ScheduledJobFormState>(() => {
+    const initialProject = projects[0];
+    const modelsByProvider = providerModelOptionsByProvider(providers);
+    const initialModel = nextScheduledJobModel("codex", modelsByProvider, "");
+    return {
+      ...DEFAULT_SCHEDULED_JOB_FORM,
+      projectId: initialProject?.id ?? "",
+      model: initialModel,
+    };
+  });
+  const [editingJobId, setEditingJobId] = useState<ScheduledJobId | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const modelsByProvider = useMemo(() => providerModelOptionsByProvider(providers), [providers]);
+  const projectsById = useMemo(
+    () => Object.fromEntries(projects.map((project) => [project.id, project] as const)),
+    [projects],
+  );
+  const selectedProjectTitle = projectsById[formState.projectId]?.name;
+  const providerSupportSummary = useMemo(() => {
+    return providers
+      .filter((provider) => provider.schedulingSupport !== "none")
+      .map(
+        (provider) => `${PROVIDER_DISPLAY_NAMES[provider.provider]}: ${provider.schedulingSupport}`,
+      )
+      .join(" · ");
+  }, [providers]);
+
+  const updateForm = useCallback(
+    (patch: Partial<ScheduledJobFormState>) =>
+      setFormState((current) => {
+        const next = {
+          ...current,
+          ...patch,
+        };
+        if (patch.provider !== undefined) {
+          next.model = nextScheduledJobModel(patch.provider, modelsByProvider, current.model);
+        }
+        return next;
+      }),
+    [modelsByProvider],
+  );
+
+  const resetForm = useCallback(() => {
+    const defaultProject = projects[0];
+    setEditingJobId(null);
+    setFormState({
+      ...DEFAULT_SCHEDULED_JOB_FORM,
+      projectId: defaultProject?.id ?? "",
+      model: nextScheduledJobModel("codex", modelsByProvider, ""),
+    });
+  }, [modelsByProvider, projects]);
+
+  const validateForm = useCallback(() => {
+    const selectedProject = projectsById[formState.projectId];
+    if (!selectedProject) {
+      throw new Error("Choose a project for this job.");
+    }
+    if (formState.title.trim().length === 0) {
+      throw new Error("Enter a title for this job.");
+    }
+    if (formState.prompt.trim().length === 0) {
+      throw new Error("Enter the prompt to run.");
+    }
+    const intervalHours = Number.parseInt(formState.intervalHours, 10);
+    if (!Number.isInteger(intervalHours) || intervalHours < 1 || intervalHours > 168) {
+      throw new Error("Interval must be between 1 and 168 hours.");
+    }
+    if (formState.model.trim().length === 0) {
+      throw new Error("Choose a model.");
+    }
+    return {
+      project: selectedProject,
+      intervalHours,
+    };
+  }, [formState, projectsById]);
+
+  const saveJob = useCallback(async () => {
+    const { project, intervalHours } = validateForm();
+    const api = ensureEnvironmentApi(project.environmentId);
+    setIsSaving(true);
+    try {
+      if (editingJobId) {
+        await api.orchestration.dispatchCommand({
+          type: "scheduled-job.update",
+          commandId: CommandId.make(crypto.randomUUID()),
+          jobId: editingJobId,
+          title: formState.title,
+          prompt: formState.prompt,
+          modelSelection: {
+            provider: formState.provider,
+            model: formState.model,
+          },
+          runtimeMode: formState.runtimeMode,
+          interactionMode: formState.interactionMode,
+          schedule: {
+            type: "interval",
+            intervalMinutes: intervalHours * 60,
+          },
+          createdAt: new Date().toISOString(),
+        });
+      } else {
+        await api.orchestration.dispatchCommand({
+          type: "scheduled-job.create",
+          commandId: CommandId.make(crypto.randomUUID()),
+          jobId: ScheduledJobId.make(crypto.randomUUID()),
+          projectId: project.id,
+          title: formState.title,
+          prompt: formState.prompt,
+          modelSelection: {
+            provider: formState.provider,
+            model: formState.model,
+          },
+          runtimeMode: formState.runtimeMode,
+          interactionMode: formState.interactionMode,
+          schedule: {
+            type: "interval",
+            intervalMinutes: intervalHours * 60,
+          },
+          createdAt: new Date().toISOString(),
+        });
+      }
+      resetForm();
+    } finally {
+      setIsSaving(false);
+    }
+  }, [editingJobId, formState, resetForm, validateForm]);
+
+  const handleJobAction = useCallback(
+    async (
+      job: ReturnType<typeof selectScheduledJobsAcrossEnvironments>[number],
+      action: "pause" | "resume" | "run" | "delete",
+    ) => {
+      const project = projectsById[job.projectId];
+      if (!project) {
+        return;
+      }
+      const api = ensureEnvironmentApi(project.environmentId);
+      const commandId = CommandId.make(crypto.randomUUID());
+      const createdAt = new Date().toISOString();
+      switch (action) {
+        case "pause":
+          await api.orchestration.dispatchCommand({
+            type: "scheduled-job.pause",
+            commandId,
+            jobId: job.id,
+            createdAt,
+          });
+          return;
+        case "resume":
+          await api.orchestration.dispatchCommand({
+            type: "scheduled-job.resume",
+            commandId,
+            jobId: job.id,
+            createdAt,
+          });
+          return;
+        case "delete":
+          await api.orchestration.dispatchCommand({
+            type: "scheduled-job.delete",
+            commandId,
+            jobId: job.id,
+            createdAt,
+          });
+          if (editingJobId === job.id) {
+            resetForm();
+          }
+          return;
+        case "run":
+          await api.orchestration.dispatchCommand({
+            type: "scheduled-job.run.trigger",
+            commandId,
+            jobId: job.id,
+            runId: ScheduledJobRunId.make(crypto.randomUUID()),
+            threadId: ThreadId.make(crypto.randomUUID()),
+            messageId: MessageId.make(crypto.randomUUID()),
+            trigger: "manual",
+            createdAt,
+          });
+          return;
+      }
+    },
+    [editingJobId, projectsById, resetForm],
+  );
+
+  const groupedJobs = useMemo(() => {
+    return projects
+      .map((project) => ({
+        project,
+        jobs: jobs
+          .filter((job) => job.projectId === project.id)
+          .toSorted(
+            (left, right) =>
+              right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id),
+          ),
+      }))
+      .filter((group) => group.jobs.length > 0);
+  }, [jobs, projects]);
+
+  return (
+    <SettingsPageContainer>
+      <SettingsSection
+        title={editingJobId ? "Edit job" : "New job"}
+        icon={<CalendarClockIcon className="size-3.5" />}
+      >
+        <SettingsRow
+          title={editingJobId ? "Scheduled job" : "Create scheduled job"}
+          description="Project-level recurring jobs create a fresh thread on each run and dispatch a normal agent turn through orchestration."
+          status={
+            providerSupportSummary
+              ? providerSupportSummary
+              : "Provider-native scheduling metadata is informational only in this version."
+          }
+        >
+          <div className="mt-4 grid gap-3 pb-4 sm:grid-cols-2">
+            <Select
+              value={formState.projectId}
+              onValueChange={(value) => {
+                if (value) {
+                  updateForm({ projectId: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Choose project">
+                  {selectedProjectTitle ?? "Choose project"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup>
+                {projects.map((project) => (
+                  <SelectItem key={project.id} value={project.id}>
+                    {project.name}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+            <Input
+              value={formState.title}
+              placeholder="Daily review"
+              onChange={(event) => updateForm({ title: event.target.value })}
+            />
+            <Select
+              value={formState.provider}
+              onValueChange={(value) =>
+                updateForm({ provider: value as ScheduledJobFormState["provider"] })
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Choose provider" />
+              </SelectTrigger>
+              <SelectPopup>
+                {providers.map((provider) => (
+                  <SelectItem key={provider.provider} value={provider.provider}>
+                    {PROVIDER_DISPLAY_NAMES[provider.provider]}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+            <Select
+              value={formState.model}
+              onValueChange={(value) => {
+                if (value) {
+                  updateForm({ model: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Choose model" />
+              </SelectTrigger>
+              <SelectPopup>
+                {modelsByProvider[formState.provider].map((model) => (
+                  <SelectItem key={model.slug} value={model.slug}>
+                    {model.name}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+            <Select
+              value={formState.runtimeMode}
+              onValueChange={(value) =>
+                updateForm({ runtimeMode: value as ScheduledJobFormState["runtimeMode"] })
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="full-access">Full access</SelectItem>
+                <SelectItem value="auto-accept-edits">Auto-accept edits</SelectItem>
+                <SelectItem value="approval-required">Approval required</SelectItem>
+              </SelectPopup>
+            </Select>
+            <Select
+              value={formState.interactionMode}
+              onValueChange={(value) =>
+                updateForm({ interactionMode: value as ScheduledJobFormState["interactionMode"] })
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="default">Default</SelectItem>
+                <SelectItem value="plan">Plan</SelectItem>
+              </SelectPopup>
+            </Select>
+            <Input
+              type="number"
+              min={1}
+              max={168}
+              value={formState.intervalHours}
+              placeholder="24"
+              onChange={(event) => updateForm({ intervalHours: event.target.value })}
+            />
+            <div className="sm:col-span-2">
+              <Textarea
+                value={formState.prompt}
+                rows={6}
+                placeholder="Review the project and summarize any build breaks, CI issues, or obvious regressions."
+                onChange={(event) => updateForm({ prompt: event.target.value })}
+              />
+            </div>
+            <div className="flex items-center gap-2 sm:col-span-2">
+              <Button
+                size="sm"
+                className="gap-1.5"
+                disabled={isSaving || projects.length === 0}
+                onClick={() =>
+                  void saveJob().catch((error) => {
+                    toastManager.add({
+                      type: "error",
+                      title: editingJobId ? "Failed to update job" : "Failed to create job",
+                      description: error instanceof Error ? error.message : "An error occurred.",
+                    });
+                  })
+                }
+              >
+                {isSaving ? (
+                  <LoaderIcon className="size-3.5 animate-spin" />
+                ) : (
+                  <PlusIcon className="size-3.5" />
+                )}
+                {editingJobId ? "Save changes" : "Create job"}
+              </Button>
+              {editingJobId ? (
+                <Button size="sm" variant="outline" onClick={resetForm}>
+                  Cancel
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        </SettingsRow>
+      </SettingsSection>
+
+      {groupedJobs.length === 0 ? (
+        <SettingsSection title="Scheduled jobs">
+          <Empty className="min-h-88">
+            <EmptyMedia variant="icon">
+              <Clock3Icon />
+            </EmptyMedia>
+            <EmptyHeader>
+              <EmptyTitle>No scheduled jobs</EmptyTitle>
+              <EmptyDescription>
+                Create a recurring project job to run agent turns on a schedule.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </SettingsSection>
+      ) : (
+        groupedJobs.map(({ project, jobs: projectJobs }) => (
+          <SettingsSection
+            key={project.id}
+            title={project.name}
+            icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
+          >
+            {projectJobs.map((job) => (
+              <div
+                key={job.id}
+                className="border-t border-border px-4 py-4 first:border-t-0 sm:px-5"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="truncate text-sm font-medium text-foreground">{job.title}</h3>
+                      <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                        {scheduledJobStatusLabel(job.status)}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {formatScheduledJobInterval(job)} {" · "}
+                      {PROVIDER_DISPLAY_NAMES[job.modelSelection.provider]} {" · "}
+                      {job.modelSelection.model}
+                    </p>
+                    <p className="mt-2 line-clamp-3 text-xs leading-relaxed text-muted-foreground/85">
+                      {job.prompt}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                      <span>
+                        Next run{" "}
+                        {job.nextRunAt ? formatRelativeTimeLabel(job.nextRunAt) : "not scheduled"}
+                      </span>
+                      <span>Last outcome {scheduledJobOutcomeLabel(job.lastOutcome)}</span>
+                      <span>Updated {formatRelativeTimeLabel(job.updatedAt)}</span>
+                    </div>
+                    {job.lastError ? (
+                      <p className="mt-2 text-[11px] text-destructive">{job.lastError}</p>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5"
+                      onClick={() =>
+                        void handleJobAction(job, "run").catch((error) => {
+                          toastManager.add({
+                            type: "error",
+                            title: "Failed to run job",
+                            description:
+                              error instanceof Error ? error.message : "An error occurred.",
+                          });
+                        })
+                      }
+                    >
+                      <PlayIcon className="size-3.5" />
+                      Run now
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5"
+                      onClick={() => {
+                        setEditingJobId(job.id);
+                        setFormState(toScheduledJobFormState(job));
+                      }}
+                    >
+                      <PencilIcon className="size-3.5" />
+                      Edit
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5"
+                      onClick={() =>
+                        void handleJobAction(
+                          job,
+                          job.status === "active" ? "pause" : "resume",
+                        ).catch((error) => {
+                          toastManager.add({
+                            type: "error",
+                            title:
+                              job.status === "active"
+                                ? "Failed to pause job"
+                                : "Failed to resume job",
+                            description:
+                              error instanceof Error ? error.message : "An error occurred.",
+                          });
+                        })
+                      }
+                    >
+                      {job.status === "active" ? (
+                        <PauseIcon className="size-3.5" />
+                      ) : (
+                        <PlayIcon className="size-3.5" />
+                      )}
+                      {job.status === "active" ? "Pause" : "Resume"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5 text-destructive hover:text-destructive"
+                      onClick={() =>
+                        void handleJobAction(job, "delete").catch((error) => {
+                          toastManager.add({
+                            type: "error",
+                            title: "Failed to delete job",
+                            description:
+                              error instanceof Error ? error.message : "An error occurred.",
+                          });
+                        })
+                      }
+                    >
+                      <Trash2Icon className="size-3.5" />
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+                <div className="mt-4 rounded-xl border border-border/70 bg-background/40 p-3">
+                  <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                    <CheckCircle2Icon className="size-3.5" />
+                    Recent runs
+                  </div>
+                  {job.runs.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No runs recorded yet.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {job.runs.slice(0, 5).map((run) => (
+                        <div
+                          key={run.id}
+                          className="flex flex-wrap items-center justify-between gap-2 text-xs"
+                        >
+                          <div className="min-w-0 text-muted-foreground">
+                            <span className="font-medium text-foreground">
+                              {scheduledJobOutcomeLabel(run.outcome)}
+                            </span>
+                            {" · "}
+                            {formatRelativeTimeLabel(run.startedAt)}
+                            {" · "}
+                            {run.trigger === "manual" ? "Manual" : "Scheduled"}
+                            {run.error ? ` · ${run.error}` : ""}
+                          </div>
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            onClick={() =>
+                              void navigate({
+                                to: "/$environmentId/$threadId",
+                                params: buildThreadRouteParams(
+                                  scopeThreadRef(job.environmentId, run.threadId),
+                                ),
+                              })
+                            }
+                          >
+                            Open thread
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </SettingsSection>
+        ))
+      )}
     </SettingsPageContainer>
   );
 }

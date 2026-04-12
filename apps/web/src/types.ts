@@ -15,6 +15,12 @@ import type {
   CheckpointRef,
   ProviderInteractionMode,
   RuntimeMode,
+  ScheduledJobId,
+  ScheduledJobRunId,
+  ScheduledJobRunOutcome,
+  ScheduledJobRunTrigger,
+  ScheduledJobSchedule,
+  ScheduledJobStatus,
 } from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -90,6 +96,40 @@ export interface Project {
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
   scripts: ProjectScript[];
+}
+
+export interface ScheduledJobRun {
+  id: ScheduledJobRunId;
+  jobId: ScheduledJobId;
+  threadId: ThreadId;
+  trigger: ScheduledJobRunTrigger;
+  startedAt: string;
+  completedAt: string | null;
+  outcome: ScheduledJobRunOutcome | null;
+  error: string | null;
+}
+
+export interface ScheduledJobRecord {
+  id: ScheduledJobId;
+  environmentId: EnvironmentId;
+  projectId: ProjectId;
+  title: string;
+  prompt: string;
+  modelSelection: ModelSelection;
+  runtimeMode: RuntimeMode;
+  interactionMode: ProviderInteractionMode;
+  status: ScheduledJobStatus;
+  schedule: ScheduledJobSchedule;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  lastOutcome: ScheduledJobRunOutcome | null;
+  lastThreadId: ThreadId | null;
+  lastError: string | null;
+  activeRun: ScheduledJobRun | null;
+  runs: ScheduledJobRun[];
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
 }
 
 export interface QueuedThreadFollowUp {

@@ -250,6 +250,8 @@ function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) 
         scripts: [],
       },
     },
+    scheduledJobIds: [],
+    scheduledJobById: {},
     threadIds: threads.map((thread) => thread.id),
     threadIdsByProjectId: {
       [projectId]: threads.map((thread) => thread.id),

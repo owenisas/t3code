@@ -38,6 +38,7 @@ const CODEX_THREAD_KEY = scopedThreadKey(CODEX_THREAD_REF);
 const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
   {
     provider: "codex",
+    schedulingSupport: "external-info",
     enabled: true,
     installed: true,
     version: "0.1.0",
@@ -66,6 +67,7 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
   },
   {
     provider: "claudeAgent",
+    schedulingSupport: "external-info",
     enabled: true,
     installed: true,
     version: "0.1.0",

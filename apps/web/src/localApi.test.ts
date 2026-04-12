@@ -203,6 +203,7 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
 const defaultProviders: ReadonlyArray<ServerProvider> = [
   {
     provider: "codex",
+    schedulingSupport: "external-info",
     enabled: true,
     installed: true,
     version: "0.116.0",

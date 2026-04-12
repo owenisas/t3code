@@ -9,8 +9,11 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   ProviderItemId,
+  ScheduledJobId,
+  ScheduledJobRunId,
   ThreadId,
   TrimmedNonEmptyString,
   TurnId,
@@ -144,6 +147,69 @@ export const ProjectScript = Schema.Struct({
   runOnWorktreeCreate: Schema.Boolean,
 });
 export type ProjectScript = typeof ProjectScript.Type;
+
+export const ScheduledJobStatus = Schema.Literals(["active", "paused"]);
+export type ScheduledJobStatus = typeof ScheduledJobStatus.Type;
+
+export const ScheduledJobRunTrigger = Schema.Literals(["schedule", "manual"]);
+export type ScheduledJobRunTrigger = typeof ScheduledJobRunTrigger.Type;
+
+export const ScheduledJobRunOutcome = Schema.Literals(["succeeded", "failed", "interrupted"]);
+export type ScheduledJobRunOutcome = typeof ScheduledJobRunOutcome.Type;
+
+export const ScheduledJobSchedule = Schema.Struct({
+  type: Schema.Literal("interval"),
+  intervalMinutes: PositiveInt.check(
+    Schema.isGreaterThanOrEqualTo(60),
+    Schema.isLessThanOrEqualTo(7 * 24 * 60),
+  ),
+});
+export type ScheduledJobSchedule = typeof ScheduledJobSchedule.Type;
+
+export const ScheduledJobRun = Schema.Struct({
+  id: ScheduledJobRunId,
+  jobId: ScheduledJobId,
+  threadId: ThreadId,
+  trigger: ScheduledJobRunTrigger,
+  startedAt: IsoDateTime,
+  completedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  outcome: Schema.NullOr(ScheduledJobRunOutcome).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  error: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+});
+export type ScheduledJobRun = typeof ScheduledJobRun.Type;
+
+export const ScheduledJob = Schema.Struct({
+  id: ScheduledJobId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  prompt: TrimmedNonEmptyString,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
+  ),
+  status: ScheduledJobStatus,
+  schedule: ScheduledJobSchedule,
+  lastRunAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  nextRunAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  lastOutcome: Schema.NullOr(ScheduledJobRunOutcome).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  lastThreadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  lastError: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  activeRun: Schema.NullOr(ScheduledJobRun).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  runs: Schema.Array(ScheduledJobRun).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  deletedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+});
+export type ScheduledJob = typeof ScheduledJob.Type;
 
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
@@ -322,6 +388,7 @@ export const OrchestrationReadModel = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProject),
   threads: Schema.Array(OrchestrationThread),
+  scheduledJobs: Schema.Array(ScheduledJob).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationReadModel = typeof OrchestrationReadModel.Type;
@@ -350,6 +417,67 @@ const ProjectDeleteCommand = Schema.Struct({
   type: Schema.Literal("project.delete"),
   commandId: CommandId,
   projectId: ProjectId,
+});
+
+const ScheduledJobCreateCommand = Schema.Struct({
+  type: Schema.Literal("scheduled-job.create"),
+  commandId: CommandId,
+  jobId: ScheduledJobId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  prompt: TrimmedNonEmptyString,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
+  ),
+  schedule: ScheduledJobSchedule,
+  createdAt: IsoDateTime,
+});
+
+const ScheduledJobUpdateCommand = Schema.Struct({
+  type: Schema.Literal("scheduled-job.update"),
+  commandId: CommandId,
+  jobId: ScheduledJobId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  prompt: Schema.optional(TrimmedNonEmptyString),
+  modelSelection: Schema.optional(ModelSelection),
+  runtimeMode: Schema.optional(RuntimeMode),
+  interactionMode: Schema.optional(ProviderInteractionMode),
+  schedule: Schema.optional(ScheduledJobSchedule),
+  createdAt: IsoDateTime,
+});
+
+const ScheduledJobPauseCommand = Schema.Struct({
+  type: Schema.Literal("scheduled-job.pause"),
+  commandId: CommandId,
+  jobId: ScheduledJobId,
+  createdAt: IsoDateTime,
+});
+
+const ScheduledJobResumeCommand = Schema.Struct({
+  type: Schema.Literal("scheduled-job.resume"),
+  commandId: CommandId,
+  jobId: ScheduledJobId,
+  createdAt: IsoDateTime,
+});
+
+const ScheduledJobDeleteCommand = Schema.Struct({
+  type: Schema.Literal("scheduled-job.delete"),
+  commandId: CommandId,
+  jobId: ScheduledJobId,
+  createdAt: IsoDateTime,
+});
+
+const ScheduledJobRunTriggerCommand = Schema.Struct({
+  type: Schema.Literal("scheduled-job.run.trigger"),
+  commandId: CommandId,
+  jobId: ScheduledJobId,
+  runId: ScheduledJobRunId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  trigger: ScheduledJobRunTrigger,
+  createdAt: IsoDateTime,
 });
 
 const ThreadCreateCommand = Schema.Struct({
@@ -580,6 +708,12 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
+  ScheduledJobCreateCommand,
+  ScheduledJobUpdateCommand,
+  ScheduledJobPauseCommand,
+  ScheduledJobResumeCommand,
+  ScheduledJobDeleteCommand,
+  ScheduledJobRunTriggerCommand,
   ThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
@@ -603,6 +737,12 @@ export const ClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
+  ScheduledJobCreateCommand,
+  ScheduledJobUpdateCommand,
+  ScheduledJobPauseCommand,
+  ScheduledJobResumeCommand,
+  ScheduledJobDeleteCommand,
+  ScheduledJobRunTriggerCommand,
   ThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
@@ -686,6 +826,16 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ScheduledJobRunCompleteCommand = Schema.Struct({
+  type: Schema.Literal("scheduled-job.run.complete"),
+  commandId: CommandId,
+  jobId: ScheduledJobId,
+  runId: ScheduledJobRunId,
+  outcome: ScheduledJobRunOutcome,
+  error: Schema.optional(TrimmedNonEmptyString),
+  completedAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -694,6 +844,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  ScheduledJobRunCompleteCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -707,6 +858,13 @@ export const OrchestrationEventType = Schema.Literals([
   "project.created",
   "project.meta-updated",
   "project.deleted",
+  "scheduled-job.created",
+  "scheduled-job.updated",
+  "scheduled-job.paused",
+  "scheduled-job.resumed",
+  "scheduled-job.deleted",
+  "scheduled-job.run-started",
+  "scheduled-job.run-completed",
   "thread.created",
   "thread.deleted",
   "thread.archived",
@@ -731,7 +889,7 @@ export const OrchestrationEventType = Schema.Literals([
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
-export const OrchestrationAggregateKind = Schema.Literals(["project", "thread"]);
+export const OrchestrationAggregateKind = Schema.Literals(["project", "scheduled-job", "thread"]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
 
@@ -759,6 +917,54 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
 export const ProjectDeletedPayload = Schema.Struct({
   projectId: ProjectId,
   deletedAt: IsoDateTime,
+});
+
+export const ScheduledJobCreatedPayload = Schema.Struct({
+  job: ScheduledJob,
+});
+
+export const ScheduledJobUpdatedPayload = Schema.Struct({
+  jobId: ScheduledJobId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  prompt: Schema.optional(TrimmedNonEmptyString),
+  modelSelection: Schema.optional(ModelSelection),
+  runtimeMode: Schema.optional(RuntimeMode),
+  interactionMode: Schema.optional(ProviderInteractionMode),
+  schedule: Schema.optional(ScheduledJobSchedule),
+  nextRunAt: Schema.NullOr(IsoDateTime),
+  updatedAt: IsoDateTime,
+});
+
+export const ScheduledJobPausedPayload = Schema.Struct({
+  jobId: ScheduledJobId,
+  updatedAt: IsoDateTime,
+});
+
+export const ScheduledJobResumedPayload = Schema.Struct({
+  jobId: ScheduledJobId,
+  nextRunAt: Schema.NullOr(IsoDateTime),
+  updatedAt: IsoDateTime,
+});
+
+export const ScheduledJobDeletedPayload = Schema.Struct({
+  jobId: ScheduledJobId,
+  deletedAt: IsoDateTime,
+});
+
+export const ScheduledJobRunStartedPayload = Schema.Struct({
+  jobId: ScheduledJobId,
+  run: ScheduledJobRun,
+  nextRunAt: Schema.NullOr(IsoDateTime),
+  updatedAt: IsoDateTime,
+});
+
+export const ScheduledJobRunCompletedPayload = Schema.Struct({
+  jobId: ScheduledJobId,
+  runId: ScheduledJobRunId,
+  outcome: ScheduledJobRunOutcome,
+  error: Schema.NullOr(TrimmedNonEmptyString),
+  completedAt: IsoDateTime,
+  updatedAt: IsoDateTime,
 });
 
 export const ThreadCreatedPayload = Schema.Struct({
@@ -928,7 +1134,7 @@ const EventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  aggregateId: Schema.Union([ProjectId, ScheduledJobId, ThreadId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -951,6 +1157,41 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("project.deleted"),
     payload: ProjectDeletedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("scheduled-job.created"),
+    payload: ScheduledJobCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("scheduled-job.updated"),
+    payload: ScheduledJobUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("scheduled-job.paused"),
+    payload: ScheduledJobPausedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("scheduled-job.resumed"),
+    payload: ScheduledJobResumedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("scheduled-job.deleted"),
+    payload: ScheduledJobDeletedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("scheduled-job.run-started"),
+    payload: ScheduledJobRunStartedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("scheduled-job.run-completed"),
+    payload: ScheduledJobRunCompletedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

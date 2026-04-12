@@ -1,6 +1,7 @@
 import {
   ArchiveIcon,
   ArrowUpDownIcon,
+  CalendarClockIcon,
   ChevronRightIcon,
   CloudIcon,
   FolderIcon,
@@ -1984,14 +1985,30 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
 
 const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   const navigate = useNavigate();
+  const pathname = useLocation({ select: (loc) => loc.pathname });
+  const handleJobsClick = useCallback(() => {
+    void navigate({ to: "/jobs" });
+  }, [navigate]);
   const handleSettingsClick = useCallback(() => {
     void navigate({ to: "/settings" });
   }, [navigate]);
+  const isJobsActive = pathname === "/jobs";
 
   return (
     <SidebarFooter className="p-2">
       <SidebarUpdatePill />
       <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="sm"
+            isActive={isJobsActive}
+            className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+            onClick={handleJobsClick}
+          >
+            <CalendarClockIcon className="size-3.5" />
+            <span className="text-xs">Jobs</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton
             size="sm"

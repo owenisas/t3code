@@ -18,6 +18,7 @@ function effort(value: string, isDefault = false) {
 const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
   {
     provider: "codex",
+    schedulingSupport: "external-info",
     enabled: true,
     installed: true,
     version: "0.116.0",
@@ -55,6 +56,7 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
   },
   {
     provider: "claudeAgent",
+    schedulingSupport: "external-info",
     enabled: true,
     installed: true,
     version: "1.0.0",
@@ -117,6 +119,7 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
 function buildCodexProvider(models: ServerProvider["models"]): ServerProvider {
   return {
     provider: "codex",
+    schedulingSupport: "external-info",
     enabled: true,
     installed: true,
     version: "0.116.0",

@@ -30,6 +30,10 @@ export const MessageId = makeEntityId("MessageId");
 export type MessageId = typeof MessageId.Type;
 export const TurnId = makeEntityId("TurnId");
 export type TurnId = typeof TurnId.Type;
+export const ScheduledJobId = makeEntityId("ScheduledJobId");
+export type ScheduledJobId = typeof ScheduledJobId.Type;
+export const ScheduledJobRunId = makeEntityId("ScheduledJobRunId");
+export type ScheduledJobRunId = typeof ScheduledJobRunId.Type;
 export const AuthSessionId = makeEntityId("AuthSessionId");
 export type AuthSessionId = typeof AuthSessionId.Type;
 

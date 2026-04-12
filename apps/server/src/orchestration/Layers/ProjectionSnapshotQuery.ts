@@ -7,6 +7,12 @@ import {
   OrchestrationProposedPlanId,
   OrchestrationReadModel,
   ProjectScript,
+  ScheduledJob,
+  ScheduledJobRun,
+  ScheduledJobRunOutcome,
+  ScheduledJobRunTrigger,
+  ScheduledJobSchedule,
+  ScheduledJobStatus,
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationLatestTurn,
@@ -33,6 +39,8 @@ import {
 } from "../../persistence/Errors.ts";
 import { ProjectionCheckpoint } from "../../persistence/Services/ProjectionCheckpoints.ts";
 import { ProjectionProject } from "../../persistence/Services/ProjectionProjects.ts";
+import { ProjectionScheduledJob } from "../../persistence/Services/ProjectionScheduledJobs.ts";
+import { ProjectionScheduledJobRun } from "../../persistence/Services/ProjectionScheduledJobRuns.ts";
 import { ProjectionState } from "../../persistence/Services/ProjectionState.ts";
 import { ProjectionThreadActivity } from "../../persistence/Services/ProjectionThreadActivities.ts";
 import { ProjectionThreadMessage } from "../../persistence/Services/ProjectionThreadMessages.ts";
@@ -66,6 +74,21 @@ const ProjectionThreadQueuedFollowUpDbRowSchema = ProjectionThreadQueuedFollowUp
   Struct.assign({
     attachments: Schema.fromJsonString(Schema.Array(ChatAttachment)),
     modelSelection: Schema.NullOr(Schema.fromJsonString(Schema.NullOr(ModelSelection))),
+  }),
+);
+const ProjectionScheduledJobDbRowSchema = ProjectionScheduledJob.mapFields(
+  Struct.assign({
+    modelSelection: Schema.fromJsonString(ModelSelection),
+    schedule: Schema.fromJsonString(ScheduledJobSchedule),
+    status: ScheduledJobStatus,
+    lastOutcome: Schema.NullOr(ScheduledJobRunOutcome),
+    activeRunId: Schema.NullOr(ProjectionScheduledJobRun.fields.runId),
+  }),
+);
+const ProjectionScheduledJobRunDbRowSchema = ProjectionScheduledJobRun.mapFields(
+  Struct.assign({
+    trigger: ScheduledJobRunTrigger,
+    outcome: Schema.NullOr(ScheduledJobRunOutcome),
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
@@ -124,6 +147,8 @@ const ProjectionThreadCheckpointContextThreadRowSchema = Schema.Struct({
 
 const REQUIRED_SNAPSHOT_PROJECTORS = [
   ORCHESTRATION_PROJECTOR_NAMES.projects,
+  ORCHESTRATION_PROJECTOR_NAMES.scheduledJobs,
+  ORCHESTRATION_PROJECTOR_NAMES.scheduledJobRuns,
   ORCHESTRATION_PROJECTOR_NAMES.threads,
   ORCHESTRATION_PROJECTOR_NAMES.threadMessages,
   ORCHESTRATION_PROJECTOR_NAMES.threadQueuedFollowUps,
@@ -192,6 +217,54 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           deleted_at AS "deletedAt"
         FROM projection_projects
         ORDER BY created_at ASC, project_id ASC
+      `,
+  });
+
+  const listScheduledJobRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionScheduledJobDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          job_id AS "jobId",
+          project_id AS "projectId",
+          title,
+          prompt,
+          model_selection_json AS "modelSelection",
+          runtime_mode AS "runtimeMode",
+          interaction_mode AS "interactionMode",
+          status,
+          schedule_json AS "schedule",
+          last_run_at AS "lastRunAt",
+          next_run_at AS "nextRunAt",
+          last_outcome AS "lastOutcome",
+          last_thread_id AS "lastThreadId",
+          last_error AS "lastError",
+          active_run_id AS "activeRunId",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          deleted_at AS "deletedAt"
+        FROM projection_scheduled_jobs
+        ORDER BY created_at ASC, job_id ASC
+      `,
+  });
+
+  const listScheduledJobRunRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionScheduledJobRunDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          run_id AS "runId",
+          job_id AS "jobId",
+          thread_id AS "threadId",
+          trigger,
+          started_at AS "startedAt",
+          completed_at AS "completedAt",
+          outcome,
+          error
+        FROM projection_scheduled_job_runs
+        ORDER BY started_at DESC, run_id DESC
       `,
   });
 
@@ -475,6 +548,22 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listScheduledJobRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:listScheduledJobs:query",
+                "ProjectionSnapshotQuery.getSnapshot:listScheduledJobs:decodeRows",
+              ),
+            ),
+          ),
+          listScheduledJobRunRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:listScheduledJobRuns:query",
+                "ProjectionSnapshotQuery.getSnapshot:listScheduledJobRuns:decodeRows",
+              ),
+            ),
+          ),
           listThreadRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -553,6 +642,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         Effect.flatMap(
           ([
             projectRows,
+            scheduledJobRows,
+            scheduledJobRunRows,
             threadRows,
             messageRows,
             queuedFollowUpRows,
@@ -566,6 +657,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             Effect.gen(function* () {
               const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
               const queuedFollowUpsByThread = new Map<string, Array<OrchestrationQueuedFollowUp>>();
+              const runsByJob = new Map<string, Array<ScheduledJobRun>>();
               const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
               const activitiesByThread = new Map<string, Array<OrchestrationThreadActivity>>();
               const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
@@ -577,11 +669,33 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               for (const row of projectRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
               }
+              for (const row of scheduledJobRows) {
+                updatedAt = maxIso(updatedAt, row.updatedAt);
+              }
               for (const row of threadRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
               }
               for (const row of stateRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
+              }
+
+              for (const row of scheduledJobRunRows) {
+                updatedAt = maxIso(updatedAt, row.startedAt);
+                if (row.completedAt !== null) {
+                  updatedAt = maxIso(updatedAt, row.completedAt);
+                }
+                const jobRuns = runsByJob.get(row.jobId) ?? [];
+                jobRuns.push({
+                  id: row.runId,
+                  jobId: row.jobId,
+                  threadId: row.threadId,
+                  trigger: row.trigger,
+                  startedAt: row.startedAt,
+                  completedAt: row.completedAt,
+                  outcome: row.outcome,
+                  error: row.error,
+                });
+                runsByJob.set(row.jobId, jobRuns);
               }
 
               for (const row of messageRows) {
@@ -732,6 +846,34 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 deletedAt: row.deletedAt,
               }));
 
+              const scheduledJobs: ReadonlyArray<ScheduledJob> = scheduledJobRows.map((row) => {
+                const runs = (runsByJob.get(row.jobId) ?? []).slice(0, 20);
+                const activeRun = row.activeRunId
+                  ? (runs.find((run) => run.id === row.activeRunId) ?? null)
+                  : null;
+                return {
+                  id: row.jobId,
+                  projectId: row.projectId,
+                  title: row.title,
+                  prompt: row.prompt,
+                  modelSelection: row.modelSelection,
+                  runtimeMode: row.runtimeMode,
+                  interactionMode: row.interactionMode,
+                  status: row.status,
+                  schedule: row.schedule,
+                  lastRunAt: row.lastRunAt,
+                  nextRunAt: row.nextRunAt,
+                  lastOutcome: row.lastOutcome,
+                  lastThreadId: row.lastThreadId,
+                  lastError: row.lastError,
+                  activeRun,
+                  runs,
+                  createdAt: row.createdAt,
+                  updatedAt: row.updatedAt,
+                  deletedAt: row.deletedAt,
+                };
+              });
+
               const threads: ReadonlyArray<OrchestrationThread> = threadRows.map((row) => ({
                 id: row.threadId,
                 projectId: row.projectId,
@@ -757,6 +899,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               const snapshot = {
                 snapshotSequence: computeSnapshotSequence(stateRows),
                 projects,
+                scheduledJobs,
                 threads,
                 updatedAt: updatedAt ?? new Date(0).toISOString(),
               };

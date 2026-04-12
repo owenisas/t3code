@@ -11,6 +11,7 @@ import type {
   OrchestrationThread,
   OrchestrationThreadActivity,
   ProjectId,
+  ScheduledJobId,
   ProviderKind,
   ScopedProjectRef,
   ScopedThreadRef,
@@ -29,8 +30,10 @@ import {
   type ChatMessage,
   type Project,
   type QueuedThreadFollowUp,
+  type ScheduledJobRecord,
   type ProposedPlan,
   type SidebarThreadSummary,
+  type ScheduledJobRun,
   type Thread,
   type ThreadSession,
   type ThreadShell,
@@ -44,6 +47,8 @@ import { getThreadFromEnvironmentState } from "./threadDerivation";
 export interface EnvironmentState {
   projectIds: ProjectId[];
   projectById: Record<ProjectId, Project>;
+  scheduledJobIds: ScheduledJobId[];
+  scheduledJobById: Record<ScheduledJobId, ScheduledJobRecord>;
   threadIds: ThreadId[];
   threadIdsByProjectId: Record<ProjectId, ThreadId[]>;
   threadShellById: Record<ThreadId, ThreadShell>;
@@ -69,6 +74,8 @@ export interface AppState {
 const initialEnvironmentState: EnvironmentState = {
   projectIds: [],
   projectById: {},
+  scheduledJobIds: [],
+  scheduledJobById: {},
   threadIds: [],
   threadIdsByProjectId: {},
   threadShellById: {},
@@ -194,6 +201,21 @@ function mapProject(
   };
 }
 
+function mapScheduledJobRun(
+  run: OrchestrationReadModel["scheduledJobs"][number]["runs"][number],
+): ScheduledJobRun {
+  return {
+    id: run.id,
+    jobId: run.jobId,
+    threadId: run.threadId,
+    trigger: run.trigger,
+    startedAt: run.startedAt,
+    completedAt: run.completedAt,
+    outcome: run.outcome,
+    error: run.error,
+  };
+}
+
 function mapQueuedFollowUp(
   followUp: OrchestrationReadModel["threads"][number]["queuedFollowUps"][number],
 ): QueuedThreadFollowUp {
@@ -206,6 +228,34 @@ function mapQueuedFollowUp(
       ? normalizeModelSelection(followUp.modelSelection)
       : null,
     queuedAt: followUp.queuedAt,
+  };
+}
+
+function mapScheduledJob(
+  job: OrchestrationReadModel["scheduledJobs"][number],
+  environmentId: EnvironmentId,
+): ScheduledJobRecord {
+  return {
+    id: job.id,
+    environmentId,
+    projectId: job.projectId,
+    title: job.title,
+    prompt: job.prompt,
+    modelSelection: normalizeModelSelection(job.modelSelection),
+    runtimeMode: job.runtimeMode,
+    interactionMode: job.interactionMode,
+    status: job.status,
+    schedule: { ...job.schedule },
+    lastRunAt: job.lastRunAt,
+    nextRunAt: job.nextRunAt,
+    lastOutcome: job.lastOutcome,
+    lastThreadId: job.lastThreadId,
+    lastError: job.lastError,
+    activeRun: job.activeRun ? mapScheduledJobRun(job.activeRun) : null,
+    runs: job.runs.map(mapScheduledJobRun),
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    deletedAt: job.deletedAt,
   };
 }
 
@@ -414,6 +464,13 @@ function getProjects(state: EnvironmentState): Project[] {
   return state.projectIds.flatMap((projectId) => {
     const project = state.projectById[projectId];
     return project ? [project] : [];
+  });
+}
+
+function getScheduledJobs(state: EnvironmentState): ScheduledJobRecord[] {
+  return state.scheduledJobIds.flatMap((jobId) => {
+    const job = state.scheduledJobById[jobId];
+    return job ? [job] : [];
   });
 }
 
@@ -853,6 +910,18 @@ function buildProjectState(
   };
 }
 
+function buildScheduledJobState(
+  jobs: ReadonlyArray<ScheduledJobRecord>,
+): Pick<EnvironmentState, "scheduledJobIds" | "scheduledJobById"> {
+  return {
+    scheduledJobIds: jobs.map((job) => job.id),
+    scheduledJobById: Object.fromEntries(jobs.map((job) => [job.id, job] as const)) as Record<
+      ScheduledJobId,
+      ScheduledJobRecord
+    >,
+  };
+}
+
 function buildThreadState(
   threads: ReadonlyArray<Thread>,
 ): Pick<
@@ -968,12 +1037,16 @@ function syncEnvironmentReadModel(
   const projects = readModel.projects
     .filter((project) => project.deletedAt === null)
     .map((project) => mapProject(project, environmentId));
+  const scheduledJobs = readModel.scheduledJobs
+    .filter((job) => job.deletedAt === null)
+    .map((job) => mapScheduledJob(job, environmentId));
   const threads = readModel.threads
     .filter((thread) => thread.deletedAt === null)
     .map((thread) => mapThread(thread, environmentId));
   return {
     ...state,
     ...buildProjectState(projects),
+    ...buildScheduledJobState(scheduledJobs),
     ...buildThreadState(threads),
     bootstrapComplete: true,
   };
@@ -1094,6 +1167,156 @@ function applyEnvironmentOrchestrationEvent(
         ...state,
         projectById,
         projectIds: removeId(state.projectIds, event.payload.projectId),
+      };
+    }
+
+    case "scheduled-job.created": {
+      const nextJob = mapScheduledJob(event.payload.job, environmentId);
+      return {
+        ...state,
+        scheduledJobIds: state.scheduledJobIds.includes(nextJob.id)
+          ? state.scheduledJobIds
+          : [...state.scheduledJobIds, nextJob.id],
+        scheduledJobById: {
+          ...state.scheduledJobById,
+          [nextJob.id]: nextJob,
+        },
+      };
+    }
+
+    case "scheduled-job.updated": {
+      const job = state.scheduledJobById[event.payload.jobId];
+      if (!job) {
+        return state;
+      }
+      return {
+        ...state,
+        scheduledJobById: {
+          ...state.scheduledJobById,
+          [event.payload.jobId]: {
+            ...job,
+            ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+            ...(event.payload.prompt !== undefined ? { prompt: event.payload.prompt } : {}),
+            ...(event.payload.modelSelection !== undefined
+              ? { modelSelection: normalizeModelSelection(event.payload.modelSelection) }
+              : {}),
+            ...(event.payload.runtimeMode !== undefined
+              ? { runtimeMode: event.payload.runtimeMode }
+              : {}),
+            ...(event.payload.interactionMode !== undefined
+              ? { interactionMode: event.payload.interactionMode }
+              : {}),
+            ...(event.payload.schedule !== undefined ? { schedule: event.payload.schedule } : {}),
+            nextRunAt: event.payload.nextRunAt,
+            updatedAt: event.payload.updatedAt,
+          },
+        },
+      };
+    }
+
+    case "scheduled-job.paused": {
+      const job = state.scheduledJobById[event.payload.jobId];
+      if (!job) {
+        return state;
+      }
+      return {
+        ...state,
+        scheduledJobById: {
+          ...state.scheduledJobById,
+          [event.payload.jobId]: {
+            ...job,
+            status: "paused",
+            nextRunAt: null,
+            updatedAt: event.payload.updatedAt,
+          },
+        },
+      };
+    }
+
+    case "scheduled-job.resumed": {
+      const job = state.scheduledJobById[event.payload.jobId];
+      if (!job) {
+        return state;
+      }
+      return {
+        ...state,
+        scheduledJobById: {
+          ...state.scheduledJobById,
+          [event.payload.jobId]: {
+            ...job,
+            status: "active",
+            nextRunAt: event.payload.nextRunAt,
+            updatedAt: event.payload.updatedAt,
+          },
+        },
+      };
+    }
+
+    case "scheduled-job.deleted": {
+      if (!state.scheduledJobById[event.payload.jobId]) {
+        return state;
+      }
+      const { [event.payload.jobId]: _removedJob, ...scheduledJobById } = state.scheduledJobById;
+      return {
+        ...state,
+        scheduledJobIds: removeId(state.scheduledJobIds, event.payload.jobId),
+        scheduledJobById,
+      };
+    }
+
+    case "scheduled-job.run-started": {
+      const job = state.scheduledJobById[event.payload.jobId];
+      if (!job) {
+        return state;
+      }
+      const nextRun = mapScheduledJobRun(event.payload.run);
+      return {
+        ...state,
+        scheduledJobById: {
+          ...state.scheduledJobById,
+          [event.payload.jobId]: {
+            ...job,
+            activeRun: nextRun,
+            runs: [nextRun, ...job.runs.filter((run) => run.id !== nextRun.id)].slice(0, 20),
+            lastThreadId: nextRun.threadId,
+            lastError: null,
+            nextRunAt: event.payload.nextRunAt,
+            updatedAt: event.payload.updatedAt,
+          },
+        },
+      };
+    }
+
+    case "scheduled-job.run-completed": {
+      const job = state.scheduledJobById[event.payload.jobId];
+      if (!job) {
+        return state;
+      }
+      const activeRun = job.activeRun?.id === event.payload.runId ? job.activeRun : null;
+      return {
+        ...state,
+        scheduledJobById: {
+          ...state.scheduledJobById,
+          [event.payload.jobId]: {
+            ...job,
+            activeRun: null,
+            runs: job.runs.map((run) =>
+              run.id === event.payload.runId
+                ? {
+                    ...run,
+                    completedAt: event.payload.completedAt,
+                    outcome: event.payload.outcome,
+                    error: event.payload.error,
+                  }
+                : run,
+            ),
+            lastRunAt: activeRun?.startedAt ?? job.lastRunAt,
+            lastOutcome: event.payload.outcome,
+            lastThreadId: activeRun?.threadId ?? job.lastThreadId,
+            lastError: event.payload.error,
+            updatedAt: event.payload.updatedAt,
+          },
+        },
       };
     }
 
@@ -1560,6 +1783,12 @@ export function selectThreadsForEnvironment(
 export function selectProjectsAcrossEnvironments(state: AppState): Project[] {
   return getEnvironmentEntries(state).flatMap(([, environmentState]) =>
     getProjects(environmentState),
+  );
+}
+
+export function selectScheduledJobsAcrossEnvironments(state: AppState): ScheduledJobRecord[] {
+  return getEnvironmentEntries(state).flatMap(([, environmentState]) =>
+    getScheduledJobs(environmentState),
   );
 }
 

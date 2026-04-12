@@ -137,6 +137,7 @@ const makeDefaultOrchestrationReadModel = () => {
         deletedAt: null,
       },
     ],
+    scheduledJobs: [],
     threads: [
       {
         id: defaultThreadId,
@@ -2696,6 +2697,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             deletedAt: null,
           },
         ],
+        scheduledJobs: [],
         threads: [
           {
             id: ThreadId.make("thread-1"),

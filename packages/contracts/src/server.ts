@@ -81,6 +81,13 @@ export const ServerProviderSkill = Schema.Struct({
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
+export const ServerProviderSchedulingSupport = Schema.Literals([
+  "none",
+  "external-info",
+  "native-api",
+]);
+export type ServerProviderSchedulingSupport = typeof ServerProviderSchedulingSupport.Type;
+
 export const ServerProvider = Schema.Struct({
   provider: ProviderKind,
   enabled: Schema.Boolean,
@@ -91,6 +98,9 @@ export const ServerProvider = Schema.Struct({
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
   models: Schema.Array(ServerProviderModel),
+  schedulingSupport: ServerProviderSchedulingSupport.pipe(
+    Schema.withDecodingDefault(Effect.succeed("none")),
+  ),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),

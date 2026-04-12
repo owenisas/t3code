@@ -107,6 +107,8 @@ function makeState(thread: Thread): AppState {
     [thread.projectId]: [thread.id],
   };
   const environmentState = {
+    scheduledJobIds: [],
+    scheduledJobById: {},
     projectIds: [projectId],
     projectById: {
       [projectId]: project,
@@ -185,6 +187,8 @@ function makeState(thread: Thread): AppState {
 
 function makeEmptyState(overrides: Partial<AppState & EnvironmentState> = {}): AppState {
   const environmentState: EnvironmentState = {
+    scheduledJobIds: [],
+    scheduledJobById: {},
     projectIds: [],
     projectById: {},
     threadIds: [],
@@ -418,6 +422,7 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
         scripts: [],
       },
     ],
+    scheduledJobs: [],
     threads: [thread],
   };
 }
@@ -625,6 +630,7 @@ describe("store read model sync", () => {
           workspaceRoot: "/tmp/project-3",
         }),
       ],
+      scheduledJobs: [],
       threads: [],
     };
 

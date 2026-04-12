@@ -9,11 +9,14 @@ import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   requireProject,
   requireProjectAbsent,
+  requireScheduledJob,
+  requireScheduledJobAbsent,
   requireThread,
   requireThreadArchived,
   requireThreadAbsent,
   requireThreadNotArchived,
 } from "./commandInvariants.ts";
+import { computeNextScheduledJobRunAt, formatScheduledJobThreadTitle } from "./scheduledJobs.ts";
 
 const nowIso = () => new Date().toISOString();
 const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload"> = {
@@ -137,6 +140,285 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           deletedAt: occurredAt,
         },
       };
+    }
+
+    case "scheduled-job.create": {
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      yield* requireScheduledJobAbsent({
+        readModel,
+        command,
+        jobId: command.jobId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "scheduled-job",
+          aggregateId: command.jobId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "scheduled-job.created",
+        payload: {
+          job: {
+            id: command.jobId,
+            projectId: command.projectId,
+            title: command.title,
+            prompt: command.prompt,
+            modelSelection: command.modelSelection,
+            runtimeMode: command.runtimeMode,
+            interactionMode: command.interactionMode,
+            status: "active",
+            schedule: command.schedule,
+            lastRunAt: null,
+            nextRunAt: computeNextScheduledJobRunAt(command.schedule, command.createdAt),
+            lastOutcome: null,
+            lastThreadId: null,
+            lastError: null,
+            activeRun: null,
+            runs: [],
+            createdAt: command.createdAt,
+            updatedAt: command.createdAt,
+            deletedAt: null,
+          },
+        },
+      };
+    }
+
+    case "scheduled-job.update": {
+      const existingJob = yield* requireScheduledJob({
+        readModel,
+        command,
+        jobId: command.jobId,
+      });
+      const updatedAt = command.createdAt;
+      const nextSchedule = command.schedule ?? existingJob.schedule;
+      return {
+        ...withEventBase({
+          aggregateKind: "scheduled-job",
+          aggregateId: command.jobId,
+          occurredAt: updatedAt,
+          commandId: command.commandId,
+        }),
+        type: "scheduled-job.updated",
+        payload: {
+          jobId: command.jobId,
+          ...(command.title !== undefined ? { title: command.title } : {}),
+          ...(command.prompt !== undefined ? { prompt: command.prompt } : {}),
+          ...(command.modelSelection !== undefined
+            ? { modelSelection: command.modelSelection }
+            : {}),
+          ...(command.runtimeMode !== undefined ? { runtimeMode: command.runtimeMode } : {}),
+          ...(command.interactionMode !== undefined
+            ? { interactionMode: command.interactionMode }
+            : {}),
+          ...(command.schedule !== undefined ? { schedule: command.schedule } : {}),
+          nextRunAt:
+            existingJob.status === "active"
+              ? computeNextScheduledJobRunAt(nextSchedule, updatedAt)
+              : null,
+          updatedAt,
+        },
+      };
+    }
+
+    case "scheduled-job.pause": {
+      const job = yield* requireScheduledJob({
+        readModel,
+        command,
+        jobId: command.jobId,
+      });
+      if (job.status === "paused") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Scheduled job '${command.jobId}' is already paused.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "scheduled-job",
+          aggregateId: command.jobId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "scheduled-job.paused",
+        payload: {
+          jobId: command.jobId,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "scheduled-job.resume": {
+      const job = yield* requireScheduledJob({
+        readModel,
+        command,
+        jobId: command.jobId,
+      });
+      if (job.status === "active") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Scheduled job '${command.jobId}' is already active.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "scheduled-job",
+          aggregateId: command.jobId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "scheduled-job.resumed",
+        payload: {
+          jobId: command.jobId,
+          nextRunAt: computeNextScheduledJobRunAt(job.schedule, command.createdAt),
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "scheduled-job.delete": {
+      yield* requireScheduledJob({
+        readModel,
+        command,
+        jobId: command.jobId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "scheduled-job",
+          aggregateId: command.jobId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "scheduled-job.deleted",
+        payload: {
+          jobId: command.jobId,
+          deletedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "scheduled-job.run.trigger": {
+      const job = yield* requireScheduledJob({
+        readModel,
+        command,
+        jobId: command.jobId,
+      });
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: job.projectId,
+      });
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (job.activeRun !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Scheduled job '${command.jobId}' already has an active run.`,
+        });
+      }
+      if (job.status !== "active" && command.trigger !== "manual") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Paused scheduled job '${command.jobId}' cannot be triggered by the scheduler.`,
+        });
+      }
+
+      const threadCreatedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.created",
+        payload: {
+          threadId: command.threadId,
+          projectId: job.projectId,
+          title: formatScheduledJobThreadTitle(job.title, command.createdAt),
+          modelSelection: job.modelSelection,
+          runtimeMode: job.runtimeMode,
+          interactionMode: job.interactionMode,
+          branch: null,
+          worktreePath: null,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+      const messageSentEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        causationEventId: threadCreatedEvent.eventId,
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          role: "user",
+          text: job.prompt,
+          attachments: [],
+          turnId: null,
+          streaming: false,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+      const turnRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        causationEventId: messageSentEvent.eventId,
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          modelSelection: job.modelSelection,
+          titleSeed: job.title,
+          runtimeMode: job.runtimeMode,
+          interactionMode: job.interactionMode,
+          createdAt: command.createdAt,
+        },
+      };
+      const runStartedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "scheduled-job",
+          aggregateId: command.jobId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        causationEventId: turnRequestedEvent.eventId,
+        type: "scheduled-job.run-started",
+        payload: {
+          jobId: command.jobId,
+          run: {
+            id: command.runId,
+            jobId: command.jobId,
+            threadId: command.threadId,
+            trigger: command.trigger,
+            startedAt: command.createdAt,
+            completedAt: null,
+            outcome: null,
+            error: null,
+          },
+          nextRunAt:
+            job.status === "active"
+              ? computeNextScheduledJobRunAt(job.schedule, command.createdAt)
+              : null,
+          updatedAt: command.createdAt,
+        },
+      };
+      return [threadCreatedEvent, messageSentEvent, turnRequestedEvent, runStartedEvent];
     }
 
     case "thread.create": {
@@ -380,8 +662,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { modelSelection: command.modelSelection }
             : {}),
           ...(command.titleSeed !== undefined ? { titleSeed: command.titleSeed } : {}),
-          runtimeMode: targetThread.runtimeMode,
-          interactionMode: targetThread.interactionMode,
+          runtimeMode: command.runtimeMode,
+          interactionMode: command.interactionMode,
           ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
           createdAt: command.createdAt,
         },
@@ -765,6 +1047,37 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           activity: command.activity,
+        },
+      };
+    }
+
+    case "scheduled-job.run.complete": {
+      const job = yield* requireScheduledJob({
+        readModel,
+        command,
+        jobId: command.jobId,
+      });
+      if (job.activeRun === null || job.activeRun.id !== command.runId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Scheduled job '${command.jobId}' does not have active run '${command.runId}'.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "scheduled-job",
+          aggregateId: command.jobId,
+          occurredAt: command.completedAt,
+          commandId: command.commandId,
+        }),
+        type: "scheduled-job.run-completed",
+        payload: {
+          jobId: command.jobId,
+          runId: command.runId,
+          outcome: command.outcome,
+          error: command.error ?? null,
+          completedAt: command.completedAt,
+          updatedAt: command.completedAt,
         },
       };
     }

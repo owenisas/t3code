@@ -73,6 +73,7 @@ function createBaseServerConfig(): ServerConfig {
     providers: [
       {
         provider: "codex",
+        schedulingSupport: "external-info",
         enabled: true,
         installed: true,
         version: "0.116.0",
@@ -166,6 +167,7 @@ function createMinimalSnapshot(): OrchestrationReadModel {
         },
       },
     ],
+    scheduledJobs: [],
     updatedAt: NOW_ISO,
   };
 }

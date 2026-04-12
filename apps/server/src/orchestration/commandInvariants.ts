@@ -2,6 +2,8 @@ import type {
   OrchestrationCommand,
   OrchestrationProject,
   OrchestrationReadModel,
+  ScheduledJob,
+  ScheduledJobId,
   OrchestrationThread,
   ProjectId,
   ThreadId,
@@ -36,6 +38,13 @@ export function listThreadsByProjectId(
   projectId: ProjectId,
 ): ReadonlyArray<OrchestrationThread> {
   return readModel.threads.filter((thread) => thread.projectId === projectId);
+}
+
+export function findScheduledJobById(
+  readModel: OrchestrationReadModel,
+  jobId: ScheduledJobId,
+): ScheduledJob | undefined {
+  return readModel.scheduledJobs.find((job) => job.id === jobId);
 }
 
 export function requireProject(input: {
@@ -84,6 +93,39 @@ export function requireThread(input: {
     invariantError(
       input.command.type,
       `Thread '${input.threadId}' does not exist for command '${input.command.type}'.`,
+    ),
+  );
+}
+
+export function requireScheduledJob(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly jobId: ScheduledJobId;
+}): Effect.Effect<ScheduledJob, OrchestrationCommandInvariantError> {
+  const job = findScheduledJobById(input.readModel, input.jobId);
+  if (job) {
+    return Effect.succeed(job);
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Scheduled job '${input.jobId}' does not exist for command '${input.command.type}'.`,
+    ),
+  );
+}
+
+export function requireScheduledJobAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly jobId: ScheduledJobId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (!findScheduledJobById(input.readModel, input.jobId)) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Scheduled job '${input.jobId}' already exists and cannot be created twice.`,
     ),
   );
 }

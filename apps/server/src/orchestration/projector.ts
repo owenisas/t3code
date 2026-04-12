@@ -1,4 +1,9 @@
-import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationEvent,
+  OrchestrationReadModel,
+  ScheduledJob,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
@@ -13,6 +18,13 @@ import {
   ProjectCreatedPayload,
   ProjectDeletedPayload,
   ProjectMetaUpdatedPayload,
+  ScheduledJobCreatedPayload,
+  ScheduledJobDeletedPayload,
+  ScheduledJobPausedPayload,
+  ScheduledJobResumedPayload,
+  ScheduledJobRunCompletedPayload,
+  ScheduledJobRunStartedPayload,
+  ScheduledJobUpdatedPayload,
   ThreadActivityAppendedPayload,
   ThreadArchivedPayload,
   ThreadCreatedPayload,
@@ -161,6 +173,7 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
     snapshotSequence: 0,
     projects: [],
     threads: [],
+    scheduledJobs: [],
     updatedAt: nowIso,
   };
 }
@@ -238,6 +251,167 @@ export function projectEvent(
                 }
               : project,
           ),
+        })),
+      );
+
+    case "scheduled-job.created":
+      return decodeForEvent(ScheduledJobCreatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const existing = nextBase.scheduledJobs.find((entry) => entry.id === payload.job.id);
+          return {
+            ...nextBase,
+            scheduledJobs: existing
+              ? nextBase.scheduledJobs.map((entry) =>
+                  entry.id === payload.job.id ? payload.job : entry,
+                )
+              : [...nextBase.scheduledJobs, payload.job],
+          };
+        }),
+      );
+
+    case "scheduled-job.updated":
+      return decodeForEvent(ScheduledJobUpdatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          scheduledJobs: nextBase.scheduledJobs.map((job) =>
+            job.id === payload.jobId
+              ? {
+                  ...job,
+                  ...(payload.title !== undefined ? { title: payload.title } : {}),
+                  ...(payload.prompt !== undefined ? { prompt: payload.prompt } : {}),
+                  ...(payload.modelSelection !== undefined
+                    ? { modelSelection: payload.modelSelection }
+                    : {}),
+                  ...(payload.runtimeMode !== undefined
+                    ? { runtimeMode: payload.runtimeMode }
+                    : {}),
+                  ...(payload.interactionMode !== undefined
+                    ? { interactionMode: payload.interactionMode }
+                    : {}),
+                  ...(payload.schedule !== undefined ? { schedule: payload.schedule } : {}),
+                  nextRunAt: payload.nextRunAt,
+                  updatedAt: payload.updatedAt,
+                }
+              : job,
+          ),
+        })),
+      );
+
+    case "scheduled-job.paused":
+      return decodeForEvent(ScheduledJobPausedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          scheduledJobs: nextBase.scheduledJobs.map((job) =>
+            job.id === payload.jobId
+              ? {
+                  ...job,
+                  status: "paused",
+                  nextRunAt: null,
+                  updatedAt: payload.updatedAt,
+                }
+              : job,
+          ),
+        })),
+      );
+
+    case "scheduled-job.resumed":
+      return decodeForEvent(ScheduledJobResumedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          scheduledJobs: nextBase.scheduledJobs.map((job) =>
+            job.id === payload.jobId
+              ? {
+                  ...job,
+                  status: "active",
+                  nextRunAt: payload.nextRunAt,
+                  updatedAt: payload.updatedAt,
+                }
+              : job,
+          ),
+        })),
+      );
+
+    case "scheduled-job.deleted":
+      return decodeForEvent(ScheduledJobDeletedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          scheduledJobs: nextBase.scheduledJobs.map((job) =>
+            job.id === payload.jobId
+              ? {
+                  ...job,
+                  deletedAt: payload.deletedAt,
+                  updatedAt: payload.deletedAt,
+                  nextRunAt: null,
+                  activeRun: null,
+                }
+              : job,
+          ),
+        })),
+      );
+
+    case "scheduled-job.run-started":
+      return decodeForEvent(
+        ScheduledJobRunStartedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          scheduledJobs: nextBase.scheduledJobs.map((job) =>
+            job.id === payload.jobId
+              ? {
+                  ...job,
+                  activeRun: payload.run,
+                  runs: [payload.run, ...job.runs.filter((run) => run.id !== payload.run.id)].slice(
+                    0,
+                    20,
+                  ),
+                  lastThreadId: payload.run.threadId,
+                  lastError: null,
+                  nextRunAt: payload.nextRunAt,
+                  updatedAt: payload.updatedAt,
+                }
+              : job,
+          ),
+        })),
+      );
+
+    case "scheduled-job.run-completed":
+      return decodeForEvent(
+        ScheduledJobRunCompletedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          scheduledJobs: nextBase.scheduledJobs.map((job) => {
+            if (job.id !== payload.jobId) {
+              return job;
+            }
+            const activeRun = job.activeRun?.id === payload.runId ? job.activeRun : null;
+            const nextRuns = job.runs.map((run) =>
+              run.id === payload.runId
+                ? {
+                    ...run,
+                    completedAt: payload.completedAt,
+                    outcome: payload.outcome,
+                    error: payload.error,
+                  }
+                : run,
+            );
+            return {
+              ...job,
+              activeRun: null,
+              runs: nextRuns,
+              lastRunAt: activeRun?.startedAt ?? job.lastRunAt,
+              lastOutcome: payload.outcome,
+              lastThreadId: activeRun?.threadId ?? job.lastThreadId,
+              lastError: payload.error,
+              updatedAt: payload.updatedAt,
+            } satisfies ScheduledJob;
+          }),
         })),
       );
 

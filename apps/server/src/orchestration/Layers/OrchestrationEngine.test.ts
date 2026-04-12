@@ -113,6 +113,7 @@ describe("OrchestrationEngine", () => {
           deletedAt: null,
         },
       ],
+      scheduledJobs: [],
       threads: [
         {
           id: ThreadId.make("thread-bootstrap"),

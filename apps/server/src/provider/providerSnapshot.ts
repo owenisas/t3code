@@ -2,6 +2,7 @@ import type {
   ModelCapabilities,
   ServerProvider,
   ServerProviderAuth,
+  ServerProviderSchedulingSupport,
   ServerProviderSkill,
   ServerProviderSlashCommand,
   ServerProviderModel,
@@ -132,10 +133,12 @@ export function buildServerProvider(input: {
   enabled: boolean;
   checkedAt: string;
   models: ReadonlyArray<ServerProviderModel>;
+  schedulingSupport?: ServerProviderSchedulingSupport;
   slashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
   skills?: ReadonlyArray<ServerProviderSkill>;
   probe: ProviderProbeResult;
 }): ServerProvider {
+  const schedulingSupport = input.schedulingSupport ?? "external-info";
   return {
     provider: input.provider,
     enabled: input.enabled,
@@ -146,6 +149,7 @@ export function buildServerProvider(input: {
     checkedAt: input.checkedAt,
     ...(input.probe.message ? { message: input.probe.message } : {}),
     models: input.models,
+    schedulingSupport,
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],
   };
