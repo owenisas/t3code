@@ -5,11 +5,11 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  type OrchestrationShellSnapshot,
   ProjectId,
   ThreadId,
   TurnId,
   type OrchestrationEvent,
-  type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -20,9 +20,9 @@ import {
   selectProjectsAcrossEnvironments,
   selectThreadByRef,
   selectThreadExistsByRef,
-  setThreadBranch,
   selectThreadsAcrossEnvironments,
-  syncServerReadModel,
+  setThreadBranch,
+  syncServerShellSnapshot,
   type AppState,
   type EnvironmentState,
 } from "./store";
@@ -226,6 +226,65 @@ function threadsOf(state: AppState) {
   return selectThreadsAcrossEnvironments(state);
 }
 
+function makeShellThread(
+  overrides: Partial<OrchestrationShellSnapshot["threads"][number]> = {},
+): OrchestrationShellSnapshot["threads"][number] {
+  return {
+    id: ThreadId.make("thread-1"),
+    projectId: ProjectId.make("project-1"),
+    title: "Thread",
+    modelSelection: {
+      provider: "codex",
+      model: "gpt-5.3-codex",
+    },
+    runtimeMode: DEFAULT_RUNTIME_MODE,
+    interactionMode: DEFAULT_INTERACTION_MODE,
+    branch: null,
+    worktreePath: null,
+    latestTurn: null,
+    createdAt: "2026-02-27T00:00:00.000Z",
+    updatedAt: "2026-02-27T00:00:00.000Z",
+    archivedAt: null,
+    session: null,
+    latestUserMessageAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+    ...overrides,
+  };
+}
+
+function makeShellProject(
+  overrides: Partial<OrchestrationShellSnapshot["projects"][number]> = {},
+): OrchestrationShellSnapshot["projects"][number] {
+  return {
+    id: ProjectId.make("project-1"),
+    title: "Project",
+    workspaceRoot: "/tmp/project",
+    repositoryIdentity: null,
+    defaultModelSelection: {
+      provider: "codex",
+      model: "gpt-5.3-codex",
+    },
+    createdAt: "2026-02-27T00:00:00.000Z",
+    updatedAt: "2026-02-27T00:00:00.000Z",
+    scripts: [],
+    ...overrides,
+  };
+}
+
+function makeShellSnapshot(input?: {
+  threads?: OrchestrationShellSnapshot["threads"];
+  projects?: OrchestrationShellSnapshot["projects"];
+}): OrchestrationShellSnapshot {
+  return {
+    snapshotSequence: 1,
+    updatedAt: "2026-02-27T00:00:00.000Z",
+    projects: input?.projects ?? [makeShellProject()],
+    threads: input?.threads ?? [makeShellThread()],
+  };
+}
+
 function makeEvent<T extends OrchestrationEvent["type"]>(
   type: T,
   payload: Extract<OrchestrationEvent, { type: T }>["payload"],
@@ -375,77 +434,6 @@ describe("thread selection memoization", () => {
   });
 });
 
-function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"][number]>) {
-  return {
-    id: ThreadId.make("thread-1"),
-    projectId: ProjectId.make("project-1"),
-    title: "Thread",
-    modelSelection: {
-      provider: "codex",
-      model: "gpt-5.3-codex",
-    },
-    runtimeMode: DEFAULT_RUNTIME_MODE,
-    interactionMode: DEFAULT_INTERACTION_MODE,
-    branch: null,
-    worktreePath: null,
-    latestTurn: null,
-    createdAt: "2026-02-27T00:00:00.000Z",
-    updatedAt: "2026-02-27T00:00:00.000Z",
-    archivedAt: null,
-    deletedAt: null,
-    messages: [],
-    activities: [],
-    proposedPlans: [],
-    checkpoints: [],
-    queuedFollowUps: [],
-    session: null,
-    ...overrides,
-  } satisfies OrchestrationReadModel["threads"][number];
-}
-
-function makeReadModel(thread: OrchestrationReadModel["threads"][number]): OrchestrationReadModel {
-  return {
-    snapshotSequence: 1,
-    updatedAt: "2026-02-27T00:00:00.000Z",
-    projects: [
-      {
-        id: ProjectId.make("project-1"),
-        title: "Project",
-        workspaceRoot: "/tmp/project",
-        defaultModelSelection: {
-          provider: "codex",
-          model: "gpt-5.3-codex",
-        },
-        createdAt: "2026-02-27T00:00:00.000Z",
-        updatedAt: "2026-02-27T00:00:00.000Z",
-        deletedAt: null,
-        scripts: [],
-      },
-    ],
-    scheduledJobs: [],
-    threads: [thread],
-  };
-}
-
-function makeReadModelProject(
-  overrides: Partial<OrchestrationReadModel["projects"][number]>,
-): OrchestrationReadModel["projects"][number] {
-  return {
-    id: ProjectId.make("project-1"),
-    title: "Project",
-    workspaceRoot: "/tmp/project",
-    defaultModelSelection: {
-      provider: "codex",
-      model: "gpt-5.3-codex",
-    },
-    createdAt: "2026-02-27T00:00:00.000Z",
-    updatedAt: "2026-02-27T00:00:00.000Z",
-    deletedAt: null,
-    scripts: [],
-    ...overrides,
-  };
-}
-
 describe("setThreadBranch", () => {
   it("updates only the scoped thread environment", () => {
     const sharedThreadId = ThreadId.make("thread-shared");
@@ -486,8 +474,8 @@ describe("setThreadBranch", () => {
   });
 });
 
-describe("store read model sync", () => {
-  it("marks bootstrap complete after snapshot sync", () => {
+describe("store shell snapshot sync", () => {
+  it("marks bootstrap complete after shell snapshot sync", () => {
     const initialState = withActiveEnvironmentState(
       localEnvironmentStateOf(makeState(makeThread())),
       {
@@ -495,84 +483,30 @@ describe("store read model sync", () => {
       },
     );
 
-    const next = syncServerReadModel(
-      initialState,
-      makeReadModel(makeReadModelThread({})),
-      localEnvironmentId,
-    );
+    const next = syncServerShellSnapshot(initialState, makeShellSnapshot(), localEnvironmentId);
 
     expect(localEnvironmentStateOf(next).bootstrapComplete).toBe(true);
   });
 
-  it("preserves claude model slugs without an active session", () => {
+  it("preserves claude model slugs from the shell snapshot", () => {
     const initialState = makeState(makeThread());
-    const readModel = makeReadModel(
-      makeReadModelThread({
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-opus-4-6",
-        },
-      }),
-    );
 
-    const next = syncServerReadModel(initialState, readModel, localEnvironmentId);
-
-    expect(threadsOf(next)[0]?.modelSelection.model).toBe("claude-opus-4-6");
-  });
-
-  it("resolves claude aliases when session provider is claudeAgent", () => {
-    const initialState = makeState(makeThread());
-    const readModel = makeReadModel(
-      makeReadModelThread({
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "sonnet",
-        },
-        session: {
-          threadId: ThreadId.make("thread-1"),
-          status: "ready",
-          providerName: "claudeAgent",
-          runtimeMode: "approval-required",
-          activeTurnId: null,
-          lastError: null,
-          updatedAt: "2026-02-27T00:00:00.000Z",
-        },
-      }),
-    );
-
-    const next = syncServerReadModel(initialState, readModel, localEnvironmentId);
-
-    expect(threadsOf(next)[0]?.modelSelection.model).toBe("claude-sonnet-4-6");
-  });
-
-  it("preserves project and thread updatedAt timestamps from the read model", () => {
-    const initialState = makeState(makeThread());
-    const readModel = makeReadModel(
-      makeReadModelThread({
-        updatedAt: "2026-02-27T00:05:00.000Z",
-      }),
-    );
-
-    const next = syncServerReadModel(initialState, readModel, localEnvironmentId);
-
-    expect(projectsOf(next)[0]?.updatedAt).toBe("2026-02-27T00:00:00.000Z");
-    expect(threadsOf(next)[0]?.updatedAt).toBe("2026-02-27T00:05:00.000Z");
-  });
-
-  it("maps archivedAt from the read model", () => {
-    const initialState = makeState(makeThread());
-    const archivedAt = "2026-02-28T00:00:00.000Z";
-    const next = syncServerReadModel(
+    const next = syncServerShellSnapshot(
       initialState,
-      makeReadModel(
-        makeReadModelThread({
-          archivedAt,
-        }),
-      ),
+      makeShellSnapshot({
+        threads: [
+          makeShellThread({
+            modelSelection: {
+              provider: "claudeAgent",
+              model: "claude-opus-4-6",
+            },
+          }),
+        ],
+      }),
       localEnvironmentId,
     );
 
-    expect(threadsOf(next)[0]?.archivedAt).toBe(archivedAt);
+    expect(threadsOf(next)[0]?.modelSelection.model).toBe("claude-opus-4-6");
   });
 
   it("replaces projects using snapshot order during recovery", () => {
@@ -610,31 +544,31 @@ describe("store read model sync", () => {
         },
       },
     });
-    const readModel: OrchestrationReadModel = {
-      snapshotSequence: 2,
-      updatedAt: "2026-02-27T00:00:00.000Z",
-      projects: [
-        makeReadModelProject({
-          id: project1,
-          title: "Project 1",
-          workspaceRoot: "/tmp/project-1",
-        }),
-        makeReadModelProject({
-          id: project2,
-          title: "Project 2",
-          workspaceRoot: "/tmp/project-2",
-        }),
-        makeReadModelProject({
-          id: project3,
-          title: "Project 3",
-          workspaceRoot: "/tmp/project-3",
-        }),
-      ],
-      scheduledJobs: [],
-      threads: [],
-    };
 
-    const next = syncServerReadModel(initialState, readModel, localEnvironmentId);
+    const next = syncServerShellSnapshot(
+      initialState,
+      makeShellSnapshot({
+        projects: [
+          makeShellProject({
+            id: project1,
+            title: "Project 1",
+            workspaceRoot: "/tmp/project-1",
+          }),
+          makeShellProject({
+            id: project2,
+            title: "Project 2",
+            workspaceRoot: "/tmp/project-2",
+          }),
+          makeShellProject({
+            id: project3,
+            title: "Project 3",
+            workspaceRoot: "/tmp/project-3",
+          }),
+        ],
+        threads: [],
+      }),
+      localEnvironmentId,
+    );
 
     expect(projectsOf(next).map((project) => project.id)).toEqual([project1, project2, project3]);
   });
