@@ -300,4 +300,8 @@ describe("parseStandaloneComposerSlashCommand", () => {
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
   });
+
+  it("does not treat /job as an interaction-mode command", () => {
+    expect(parseStandaloneComposerSlashCommand("/job")).toBeNull();
+  });
 });

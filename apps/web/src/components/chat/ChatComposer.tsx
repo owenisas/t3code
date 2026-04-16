@@ -753,11 +753,11 @@ export const ChatComposer = memo(
             description: "Switch this thread back to normal build mode",
           },
           {
-            id: "slash:schedule",
+            id: "slash:job",
             type: "slash-command",
-            command: "schedule",
-            label: "/schedule",
-            description: "Create a recurring project job, for example: /schedule every 6h Prompt",
+            command: "job",
+            label: "/job",
+            description: "Ask the agent to help create a recurring project job",
           },
         ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
         const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
@@ -1405,8 +1405,8 @@ export const ChatComposer = memo(
             }
             return;
           }
-          if (item.command === "schedule") {
-            const replacement = "/schedule every 6h ";
+          if (item.command === "job") {
+            const replacement = "/job ";
             const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
               snapshot.value,
               trigger.rangeEnd,

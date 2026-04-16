@@ -35,7 +35,7 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import { useGitStatus } from "~/lib/gitStatusState";
 import { usePrimaryEnvironmentId } from "../environments/primary";
-import { ensureEnvironmentApi, readEnvironmentApi } from "../environmentApi";
+import { readEnvironmentApi } from "../environmentApi";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -116,7 +116,7 @@ import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelection } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { deriveLogicalProjectKey } from "../logicalProject";
-import { buildScheduledJobCreateCommand, parseScheduleSlashCommand } from "../scheduledJobs";
+import { parseJobSlashCommand } from "../scheduledJobs";
 import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
@@ -2408,61 +2408,25 @@ export default function ChatView(props: ChatViewProps) {
       composerImages.length === 0 && sendableComposerTerminalContexts.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
-    const scheduleSlashCommand = parseScheduleSlashCommand(trimmed);
-    if (scheduleSlashCommand) {
+    const jobSlashCommand = parseJobSlashCommand(trimmed);
+    if (jobSlashCommand) {
       if (composerImages.length > 0 || sendableComposerTerminalContexts.length > 0) {
         toastManager.add({
           type: "error",
-          title: "Schedule commands only support text prompts",
-          description: "Remove attachments or terminal context before creating a scheduled job.",
+          title: "Job commands only support text prompts",
+          description:
+            "Remove attachments or terminal context before asking the agent to create a job.",
         });
         return;
       }
-      if (scheduleSlashCommand.kind === "error") {
+      if (jobSlashCommand.kind === "error") {
         toastManager.add({
           type: "error",
-          title: "Invalid schedule command",
-          description: scheduleSlashCommand.error,
+          title: "Invalid job command",
+          description: jobSlashCommand.error,
         });
         return;
       }
-      if (!activeProject) {
-        return;
-      }
-      const scheduleModelSelection: ModelSelection = {
-        provider: ctxSelectedProvider,
-        model:
-          ctxSelectedModelSelection.model ||
-          (activeProject.defaultModelSelection?.provider === ctxSelectedProvider
-            ? activeProject.defaultModelSelection.model
-            : null) ||
-          DEFAULT_MODEL_BY_PROVIDER[ctxSelectedProvider],
-        ...(ctxSelectedModelSelection.options
-          ? { options: ctxSelectedModelSelection.options }
-          : {}),
-      };
-      await ensureEnvironmentApi(activeProject.environmentId).orchestration.dispatchCommand(
-        buildScheduledJobCreateCommand({
-          projectId: activeProject.id,
-          title: scheduleSlashCommand.title,
-          prompt: scheduleSlashCommand.prompt,
-          modelSelection: scheduleModelSelection,
-          runtimeMode,
-          interactionMode,
-          intervalHours: scheduleSlashCommand.intervalHours,
-        }),
-      );
-      promptRef.current = "";
-      clearComposerDraftContent(composerDraftTarget);
-      composerRef.current?.resetCursorState();
-      toastManager.add({
-        type: "success",
-        title: `Created scheduled job: ${scheduleSlashCommand.title}`,
-        description: `Runs every ${scheduleSlashCommand.intervalHours} hour${
-          scheduleSlashCommand.intervalHours === 1 ? "" : "s"
-        }. Manage it from Jobs.`,
-      });
-      return;
     }
     if (standaloneSlashCommand) {
       handleInteractionModeChange(standaloneSlashCommand);
@@ -2510,7 +2474,7 @@ export default function ChatView(props: ChatViewProps) {
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const messageTextForSend = appendTerminalContextsToPrompt(
-      promptForSend,
+      jobSlashCommand?.kind === "match" ? jobSlashCommand.injectedPrompt : promptForSend,
       composerTerminalContextsSnapshot,
     );
     const messageIdForSend = newMessageId();

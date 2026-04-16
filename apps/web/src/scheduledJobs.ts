@@ -5,22 +5,18 @@ import {
   ScheduledJobId,
   type RuntimeMode,
 } from "@t3tools/contracts";
-import { truncate } from "@t3tools/shared/String";
 
 import { randomUUID } from "./lib/utils";
 import { newCommandId } from "./lib/utils";
 
-export const SCHEDULE_SLASH_COMMAND_USAGE =
-  "Use /schedule every 6h Prompt, or /schedule every 6h Title :: Prompt.";
+export const JOB_SLASH_COMMAND_USAGE =
+  "Use /job followed by the recurring job you want to create, for example: /job every 6h Check the repo for failing builds.";
 
-type ScheduleSlashCommandUnit = "hour" | "day";
-
-export type ScheduleSlashCommandParseResult =
+export type JobSlashCommandParseResult =
   | {
       kind: "match";
-      intervalHours: number;
-      title: string;
-      prompt: string;
+      content: string;
+      injectedPrompt: string;
     }
   | {
       kind: "error";
@@ -28,71 +24,46 @@ export type ScheduleSlashCommandParseResult =
     }
   | null;
 
-function normalizeScheduleCommandUnit(raw: string): ScheduleSlashCommandUnit | null {
-  const normalized = raw.toLowerCase();
-  if (["h", "hr", "hrs", "hour", "hours"].includes(normalized)) {
-    return "hour";
-  }
-  if (["d", "day", "days"].includes(normalized)) {
-    return "day";
-  }
-  return null;
+export function buildJobCreationInstructionPrompt(content: string): string {
+  const trimmedContent = content.trim();
+  return [
+    "The user invoked T3 Code's /job helper. This is a T3-owned helper, not a provider-native slash command.",
+    "",
+    "Help the user turn the request below into a T3 Code scheduled agent job for the current project.",
+    "",
+    "T3 Code scheduled job rules:",
+    "- Jobs are project-level recurring agent runs managed by T3 Code.",
+    "- Each scheduled run creates a fresh thread in the target project.",
+    "- The v1 scheduler supports interval schedules only: every N hours, from 1 hour through 7 days.",
+    "- A useful job definition needs a title, schedule interval, and a self-contained prompt describing what the scheduled agent should do each run.",
+    "- The job prompt should specify what to inspect, what changes are allowed, what verification to run, and what to report when there is nothing to do.",
+    "",
+    "Your task:",
+    "- Treat the user's text after /job as the intended job content.",
+    "- If the content has enough detail, produce a concise proposed job definition with title, interval, and final job prompt.",
+    "- If critical details are missing, ask only the smallest necessary follow-up questions.",
+    "- Do not execute the recurring task now unless the user explicitly asks you to run it immediately.",
+    "",
+    "User job content:",
+    trimmedContent,
+  ].join("\n");
 }
 
-export function deriveScheduledJobTitle(prompt: string): string {
-  const firstLine = prompt
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
-  return truncate(firstLine ?? "Scheduled job");
-}
-
-export function parseScheduleSlashCommand(input: string): ScheduleSlashCommandParseResult {
+export function parseJobSlashCommand(input: string): JobSlashCommandParseResult {
   const trimmed = input.trim();
-  if (!/^\/schedule\b/i.test(trimmed)) {
+  if (!/^\/job\b/i.test(trimmed)) {
     return null;
   }
 
-  const body = trimmed.replace(/^\/schedule\b/i, "").trim();
-  if (body.length === 0) {
-    return { kind: "error", error: SCHEDULE_SLASH_COMMAND_USAGE };
-  }
-
-  const match = /^(?:every\s+)?(\d+)\s*(h|hr|hrs|hour|hours|d|day|days)\s+([\s\S]+)$/iu.exec(body);
-  if (!match) {
-    return { kind: "error", error: SCHEDULE_SLASH_COMMAND_USAGE };
-  }
-
-  const rawAmount = Number.parseInt(match[1] ?? "", 10);
-  const unit = normalizeScheduleCommandUnit(match[2] ?? "");
-  const remainder = (match[3] ?? "").trim();
-  if (!Number.isInteger(rawAmount) || rawAmount <= 0 || unit === null || remainder.length === 0) {
-    return { kind: "error", error: SCHEDULE_SLASH_COMMAND_USAGE };
-  }
-
-  const intervalHours = unit === "day" ? rawAmount * 24 : rawAmount;
-  if (!Number.isInteger(intervalHours) || intervalHours < 1 || intervalHours > 168) {
-    return {
-      kind: "error",
-      error: "Scheduled jobs currently support intervals between 1 hour and 7 days.",
-    };
-  }
-
-  const separatorIndex = remainder.indexOf("::");
-  const title =
-    separatorIndex >= 0
-      ? remainder.slice(0, separatorIndex).trim()
-      : deriveScheduledJobTitle(remainder);
-  const prompt = (separatorIndex >= 0 ? remainder.slice(separatorIndex + 2) : remainder).trim();
-  if (prompt.length === 0) {
-    return { kind: "error", error: "Enter the scheduled job prompt after the interval." };
+  const content = trimmed.replace(/^\/job\b/i, "").trim();
+  if (content.length === 0) {
+    return { kind: "error", error: JOB_SLASH_COMMAND_USAGE };
   }
 
   return {
     kind: "match",
-    intervalHours,
-    title: title.length > 0 ? title : deriveScheduledJobTitle(prompt),
-    prompt,
+    content,
+    injectedPrompt: buildJobCreationInstructionPrompt(content),
   };
 }
 
