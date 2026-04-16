@@ -7,6 +7,7 @@ import {
   MessageId,
   type OrchestrationShellSnapshot,
   ProjectId,
+  ScheduledJobId,
   ThreadId,
   TurnId,
   type OrchestrationEvent,
@@ -18,6 +19,7 @@ import {
   applyOrchestrationEvents,
   selectEnvironmentState,
   selectProjectsAcrossEnvironments,
+  selectScheduledJobsAcrossEnvironments,
   selectThreadByRef,
   selectThreadExistsByRef,
   selectThreadsAcrossEnvironments,
@@ -226,6 +228,10 @@ function threadsOf(state: AppState) {
   return selectThreadsAcrossEnvironments(state);
 }
 
+function scheduledJobsOf(state: AppState) {
+  return selectScheduledJobsAcrossEnvironments(state);
+}
+
 function makeShellThread(
   overrides: Partial<OrchestrationShellSnapshot["threads"][number]> = {},
 ): OrchestrationShellSnapshot["threads"][number] {
@@ -273,14 +279,49 @@ function makeShellProject(
   };
 }
 
+function makeShellScheduledJob(
+  overrides: Partial<OrchestrationShellSnapshot["scheduledJobs"][number]> = {},
+): OrchestrationShellSnapshot["scheduledJobs"][number] {
+  return {
+    id: ScheduledJobId.make("job-1"),
+    projectId: ProjectId.make("project-1"),
+    title: "Daily review",
+    prompt: "Review the project.",
+    modelSelection: {
+      provider: "codex",
+      model: "gpt-5.3-codex",
+    },
+    runtimeMode: DEFAULT_RUNTIME_MODE,
+    interactionMode: DEFAULT_INTERACTION_MODE,
+    status: "active",
+    schedule: {
+      type: "interval",
+      intervalMinutes: 240,
+    },
+    lastRunAt: null,
+    nextRunAt: "2026-02-27T04:00:00.000Z",
+    lastOutcome: null,
+    lastThreadId: null,
+    lastError: null,
+    activeRun: null,
+    runs: [],
+    createdAt: "2026-02-27T00:00:00.000Z",
+    updatedAt: "2026-02-27T00:00:00.000Z",
+    deletedAt: null,
+    ...overrides,
+  };
+}
+
 function makeShellSnapshot(input?: {
   threads?: OrchestrationShellSnapshot["threads"];
   projects?: OrchestrationShellSnapshot["projects"];
+  scheduledJobs?: OrchestrationShellSnapshot["scheduledJobs"];
 }): OrchestrationShellSnapshot {
   return {
     snapshotSequence: 1,
     updatedAt: "2026-02-27T00:00:00.000Z",
     projects: input?.projects ?? [makeShellProject()],
+    scheduledJobs: input?.scheduledJobs ?? [],
     threads: input?.threads ?? [makeShellThread()],
   };
 }
@@ -507,6 +548,33 @@ describe("store shell snapshot sync", () => {
     );
 
     expect(threadsOf(next)[0]?.modelSelection.model).toBe("claude-opus-4-6");
+  });
+
+  it("hydrates scheduled jobs from the shell snapshot", () => {
+    const initialState = makeState(makeThread());
+
+    const next = syncServerShellSnapshot(
+      initialState,
+      makeShellSnapshot({
+        scheduledJobs: [
+          makeShellScheduledJob({
+            id: ScheduledJobId.make("job-1"),
+            title: "Repo health",
+            prompt: "Check build health.",
+          }),
+        ],
+      }),
+      localEnvironmentId,
+    );
+
+    expect(scheduledJobsOf(next)).toMatchObject([
+      {
+        id: "job-1",
+        title: "Repo health",
+        prompt: "Check build health.",
+        projectId: "project-1",
+      },
+    ]);
   });
 
   it("replaces projects using snapshot order during recovery", () => {

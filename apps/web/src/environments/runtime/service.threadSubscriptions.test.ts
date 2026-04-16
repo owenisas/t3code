@@ -91,6 +91,7 @@ function makeThreadShellSnapshot(params: {
   return {
     snapshotSequence: 1,
     projects: [],
+    scheduledJobs: [],
     updatedAt: "2026-04-13T00:00:00.000Z",
     threads: [
       {

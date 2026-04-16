@@ -50,6 +50,7 @@ function createTestClient() {
               snapshot: {
                 snapshotSequence: 1,
                 projects: [],
+                scheduledJobs: [],
                 threads: [],
                 updatedAt: "2026-04-12T00:00:00.000Z",
               },
@@ -133,6 +134,7 @@ function createTestClient() {
           snapshot: {
             snapshotSequence,
             projects: [],
+            scheduledJobs: [],
             threads: [],
             updatedAt: "2026-04-12T00:00:00.000Z",
           },

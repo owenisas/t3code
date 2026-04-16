@@ -425,6 +425,7 @@ const buildAppUnderTest = (options?: {
             Effect.succeed({
               snapshotSequence: 0,
               projects: [],
+              scheduledJobs: [],
               threads: [],
               updatedAt: new Date(0).toISOString(),
             }),

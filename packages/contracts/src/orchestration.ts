@@ -444,6 +444,7 @@ export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 export const OrchestrationShellSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProjectShell),
+  scheduledJobs: Schema.Array(ScheduledJob).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   threads: Schema.Array(OrchestrationThreadShell),
   updatedAt: IsoDateTime,
 });

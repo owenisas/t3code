@@ -1173,10 +1173,17 @@ function syncEnvironmentShellSnapshot(
   environmentId: EnvironmentId,
 ): EnvironmentState {
   const nextProjects = snapshot.projects.map((project) => mapProject(project, environmentId));
+  const nextScheduledJobs = snapshot.scheduledJobs.map((job) =>
+    mapScheduledJob(job, environmentId),
+  );
   const nextThreadIds = new Set(snapshot.threads.map((thread) => thread.id));
   let nextState: EnvironmentState = {
     ...state,
     ...buildProjectState(nextProjects),
+    scheduledJobIds: nextScheduledJobs.map((job) => job.id),
+    scheduledJobById: Object.fromEntries(
+      nextScheduledJobs.map((job) => [job.id, job] as const),
+    ) as Record<ScheduledJobId, ScheduledJobRecord>,
     threadIds: [],
     threadIdsByProjectId: {},
     threadShellById: {},

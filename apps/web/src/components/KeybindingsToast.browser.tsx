@@ -186,6 +186,7 @@ function toShellSnapshot(snapshot: OrchestrationReadModel) {
       createdAt: project.createdAt,
       updatedAt: project.updatedAt,
     })),
+    scheduledJobs: snapshot.scheduledJobs,
     threads: snapshot.threads.map((thread) => ({
       id: thread.id,
       projectId: thread.projectId,
