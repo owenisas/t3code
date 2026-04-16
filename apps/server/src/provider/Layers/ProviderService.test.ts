@@ -24,6 +24,7 @@ import { Effect, Fiber, Layer, Metric, Option, PubSub, Ref, Stream } from "effec
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
+  ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
   ProviderUnsupportedError,
   ProviderValidationError,
@@ -69,22 +70,23 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
   const sessions = new Map<ThreadId, ProviderSession>();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
 
-  const startSession = vi.fn((input: ProviderSessionStartInput) =>
-    Effect.sync(() => {
-      const now = new Date().toISOString();
-      const session: ProviderSession = {
-        provider,
-        status: "ready",
-        runtimeMode: input.runtimeMode,
-        threadId: input.threadId,
-        resumeCursor: input.resumeCursor ?? { opaque: `resume-${String(input.threadId)}` },
-        cwd: input.cwd ?? process.cwd(),
-        createdAt: now,
-        updatedAt: now,
-      };
-      sessions.set(session.threadId, session);
-      return session;
-    }),
+  const startSession = vi.fn(
+    (input: ProviderSessionStartInput): Effect.Effect<ProviderSession, ProviderAdapterError> =>
+      Effect.sync(() => {
+        const now = new Date().toISOString();
+        const session: ProviderSession = {
+          provider,
+          status: "ready",
+          runtimeMode: input.runtimeMode,
+          threadId: input.threadId,
+          resumeCursor: input.resumeCursor ?? { opaque: `resume-${String(input.threadId)}` },
+          cwd: input.cwd ?? process.cwd(),
+          createdAt: now,
+          updatedAt: now,
+        };
+        sessions.set(session.threadId, session);
+        return session;
+      }),
   );
 
   const sendTurn = vi.fn(
@@ -756,6 +758,79 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("falls back to a fresh claudeAgent session when persisted resume state is stale", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      const initial = yield* provider.startSession(asThreadId("thread-claude-stale-send-turn"), {
+        provider: "claudeAgent",
+        threadId: asThreadId("thread-claude-stale-send-turn"),
+        cwd: "/tmp/project-claude-stale-send-turn",
+        runtimeMode: "full-access",
+      });
+
+      yield* routing.claude.stopAll();
+      routing.claude.startSession.mockClear();
+      routing.claude.sendTurn.mockClear();
+
+      routing.claude.startSession.mockImplementationOnce((input: ProviderSessionStartInput) => {
+        if (input.resumeCursor === undefined) {
+          return Effect.fail(
+            new ProviderAdapterRequestError({
+              provider: "claudeAgent",
+              method: "session/start",
+              detail: "Expected resume cursor on first fallback attempt.",
+            }),
+          );
+        }
+        return Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "claudeAgent",
+            method: "session/start",
+            detail:
+              "Claude Code returned an error result: No conversation found with session ID: stale-session-id",
+          }),
+        );
+      });
+
+      yield* provider.sendTurn({
+        threadId: initial.threadId,
+        input: "resume with fallback",
+        attachments: [],
+      });
+
+      assert.equal(routing.claude.startSession.mock.calls.length, 2);
+      const failedResumeAttempt = routing.claude.startSession.mock.calls[0]?.[0];
+      const fallbackAttempt = routing.claude.startSession.mock.calls[1]?.[0];
+      assert.equal(typeof failedResumeAttempt === "object" && failedResumeAttempt !== null, true);
+      assert.equal(typeof fallbackAttempt === "object" && fallbackAttempt !== null, true);
+      if (
+        failedResumeAttempt &&
+        typeof failedResumeAttempt === "object" &&
+        fallbackAttempt &&
+        typeof fallbackAttempt === "object"
+      ) {
+        const resumedPayload = failedResumeAttempt as {
+          resumeCursor?: unknown;
+          cwd?: string;
+          threadId?: string;
+        };
+        const fallbackPayload = fallbackAttempt as {
+          resumeCursor?: unknown;
+          cwd?: string;
+          threadId?: string;
+        };
+        assert.deepEqual(resumedPayload.resumeCursor, initial.resumeCursor);
+        assert.equal(resumedPayload.cwd, "/tmp/project-claude-stale-send-turn");
+        assert.equal(resumedPayload.threadId, initial.threadId);
+        assert.equal("resumeCursor" in fallbackPayload, false);
+        assert.equal(fallbackPayload.cwd, "/tmp/project-claude-stale-send-turn");
+        assert.equal(fallbackPayload.threadId, initial.threadId);
+      }
+      assert.equal(routing.claude.sendTurn.mock.calls.length, 1);
+    }),
+  );
+
   it.effect("lists no sessions after adapter runtime clears", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
@@ -908,6 +983,117 @@ routing.layer("ProviderServiceLive routing", (it) => {
         assert.equal(startPayload.cwd, "/tmp/project-claude-start");
         assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
         assert.equal(startPayload.threadId, initial.threadId);
+      }
+
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("falls back to a fresh claudeAgent session when restart resume state is stale", () =>
+    Effect.gen(function* () {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-stale-"));
+      const dbPath = path.join(tempDir, "orchestration.sqlite");
+      const persistenceLayer = makeSqlitePersistenceLive(dbPath);
+      const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+        Layer.provide(persistenceLayer),
+      );
+
+      const firstClaude = makeFakeCodexAdapter("claudeAgent");
+      const firstRegistry: typeof ProviderAdapterRegistry.Service = {
+        getByProvider: (provider) =>
+          provider === "claudeAgent"
+            ? Effect.succeed(firstClaude.adapter)
+            : Effect.fail(new ProviderUnsupportedError({ provider })),
+        listProviders: () => Effect.succeed(["claudeAgent"]),
+      };
+      const firstProviderLayer = makeProviderServiceLive().pipe(
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry, firstRegistry)),
+        Layer.provide(ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer))),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(AnalyticsService.layerTest),
+      );
+
+      const initial = yield* Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        return yield* provider.startSession(asThreadId("thread-claude-stale-start"), {
+          provider: "claudeAgent",
+          threadId: asThreadId("thread-claude-stale-start"),
+          cwd: "/tmp/project-claude-stale-start",
+          runtimeMode: "full-access",
+        });
+      }).pipe(Effect.provide(firstProviderLayer));
+
+      const secondClaude = makeFakeCodexAdapter("claudeAgent");
+      secondClaude.startSession.mockImplementationOnce((input: ProviderSessionStartInput) => {
+        if (input.resumeCursor === undefined) {
+          return Effect.fail(
+            new ProviderAdapterRequestError({
+              provider: "claudeAgent",
+              method: "session/start",
+              detail: "Expected persisted resume cursor on first restart attempt.",
+            }),
+          );
+        }
+        return Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "claudeAgent",
+            method: "session/start",
+            detail:
+              "Claude Code returned an error result: No conversation found with session ID: stale-session-id",
+          }),
+        );
+      });
+      const secondRegistry: typeof ProviderAdapterRegistry.Service = {
+        getByProvider: (provider) =>
+          provider === "claudeAgent"
+            ? Effect.succeed(secondClaude.adapter)
+            : Effect.fail(new ProviderUnsupportedError({ provider })),
+        listProviders: () => Effect.succeed(["claudeAgent"]),
+      };
+      const secondProviderLayer = makeProviderServiceLive().pipe(
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry, secondRegistry)),
+        Layer.provide(ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer))),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(AnalyticsService.layerTest),
+      );
+
+      yield* Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        yield* provider.startSession(initial.threadId, {
+          provider: "claudeAgent",
+          threadId: initial.threadId,
+          cwd: "/tmp/project-claude-stale-start",
+          runtimeMode: "full-access",
+        });
+      }).pipe(Effect.provide(secondProviderLayer));
+
+      assert.equal(secondClaude.startSession.mock.calls.length, 2);
+      const failedResumeAttempt = secondClaude.startSession.mock.calls[0]?.[0];
+      const fallbackAttempt = secondClaude.startSession.mock.calls[1]?.[0];
+      assert.equal(typeof failedResumeAttempt === "object" && failedResumeAttempt !== null, true);
+      assert.equal(typeof fallbackAttempt === "object" && fallbackAttempt !== null, true);
+      if (
+        failedResumeAttempt &&
+        typeof failedResumeAttempt === "object" &&
+        fallbackAttempt &&
+        typeof fallbackAttempt === "object"
+      ) {
+        const resumedPayload = failedResumeAttempt as {
+          resumeCursor?: unknown;
+          cwd?: string;
+          threadId?: string;
+        };
+        const fallbackPayload = fallbackAttempt as {
+          resumeCursor?: unknown;
+          cwd?: string;
+          threadId?: string;
+        };
+        assert.deepEqual(resumedPayload.resumeCursor, initial.resumeCursor);
+        assert.equal(resumedPayload.cwd, "/tmp/project-claude-stale-start");
+        assert.equal(resumedPayload.threadId, initial.threadId);
+        assert.equal("resumeCursor" in fallbackPayload, false);
+        assert.equal(fallbackPayload.cwd, "/tmp/project-claude-stale-start");
+        assert.equal(fallbackPayload.threadId, initial.threadId);
       }
 
       fs.rmSync(tempDir, { recursive: true, force: true });

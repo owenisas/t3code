@@ -307,6 +307,24 @@ it.effect("decodes thread archive and unarchive commands", () =>
   }),
 );
 
+it.effect("decodes thread.fork commands", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.fork",
+      commandId: "cmd-fork-1",
+      threadId: "thread-fork-1",
+      sourceThreadId: "thread-source-1",
+      sourceMessageId: "message-source-1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.type, "thread.fork");
+    assert.strictEqual(parsed.threadId, "thread-fork-1");
+    assert.strictEqual(parsed.sourceThreadId, "thread-source-1");
+    assert.strictEqual(parsed.sourceMessageId, "message-source-1");
+  }),
+);
+
 it.effect("decodes thread archived and unarchived events", () =>
   Effect.gen(function* () {
     const archived = yield* decodeOrchestrationEvent({
@@ -346,6 +364,31 @@ it.effect("decodes thread archived and unarchived events", () =>
     assert.strictEqual(archived.type, "thread.archived");
     assert.strictEqual(archived.payload.archivedAt, "2026-01-01T00:00:00.000Z");
     assert.strictEqual(unarchived.type, "thread.unarchived");
+  }),
+);
+
+it.effect("decodes thread fork-context-hydrated events", () =>
+  Effect.gen(function* () {
+    const hydrated = yield* decodeOrchestrationEvent({
+      sequence: 3,
+      eventId: "event-fork-hydrated-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "thread.fork-context-hydrated",
+      occurredAt: "2026-01-03T00:00:00.000Z",
+      commandId: "cmd-fork-hydrate-1",
+      causationEventId: null,
+      correlationId: "cmd-fork-hydrate-1",
+      metadata: {},
+      payload: {
+        threadId: "thread-1",
+        hydratedAt: "2026-01-03T00:00:00.000Z",
+        updatedAt: "2026-01-03T00:00:00.000Z",
+      },
+    });
+
+    assert.strictEqual(hydrated.type, "thread.fork-context-hydrated");
+    assert.strictEqual(hydrated.payload.hydratedAt, "2026-01-03T00:00:00.000Z");
   }),
 );
 

@@ -17,6 +17,7 @@ import {
   type TerminalContextDraft,
 } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
+import { randomUUID } from "~/lib/utils";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
@@ -133,6 +134,49 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
     previewUrls.push(attachment.previewUrl);
   }
   return previewUrls;
+}
+
+export async function cloneUserMessageImagesForComposer(
+  message: ChatMessage,
+): Promise<ComposerImageAttachment[]> {
+  if (message.role !== "user" || !message.attachments || message.attachments.length === 0) {
+    return [];
+  }
+
+  const clonedImages = await Promise.all(
+    message.attachments.map(async (attachment) => {
+      if (attachment.type !== "image") {
+        return null;
+      }
+      if (!attachment.previewUrl) {
+        return null;
+      }
+
+      try {
+        const response = await fetch(attachment.previewUrl);
+        if (!response.ok) {
+          return null;
+        }
+        const blob = await response.blob();
+        const file = new File([blob], attachment.name, {
+          type: attachment.mimeType || blob.type,
+        });
+        return {
+          type: "image" as const,
+          id: randomUUID(),
+          name: attachment.name,
+          mimeType: attachment.mimeType || file.type,
+          sizeBytes: file.size,
+          previewUrl: URL.createObjectURL(file),
+          file,
+        } satisfies ComposerImageAttachment;
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  return clonedImages.flatMap((image) => (image ? [image] : []));
 }
 
 export interface PullRequestDialogState {

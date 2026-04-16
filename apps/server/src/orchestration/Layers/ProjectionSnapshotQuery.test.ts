@@ -119,6 +119,27 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       `;
 
       yield* sql`
+        INSERT INTO projection_thread_queued_follow_ups (
+          follow_up_id,
+          thread_id,
+          message_id,
+          text,
+          attachments_json,
+          model_selection_json,
+          queued_at
+        )
+        VALUES (
+          'follow-up-1',
+          'thread-1',
+          'message-follow-up-1',
+          'queued follow-up text',
+          '[]',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          '2026-02-24T00:00:04.500Z'
+        )
+      `;
+
+      yield* sql`
         INSERT INTO projection_thread_proposed_plans (
           plan_id,
           thread_id,
@@ -294,11 +315,24 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               planId: "plan-1",
             },
           },
+          queuedFollowUps: [
+            {
+              id: "follow-up-1",
+              messageId: asMessageId("message-follow-up-1"),
+              text: "queued follow-up text",
+              attachments: [],
+              modelSelection: {
+                provider: "codex",
+                model: "gpt-5-codex",
+              },
+              queuedAt: "2026-02-24T00:00:04.500Z",
+            },
+          ],
+          forkOrigin: null,
           createdAt: "2026-02-24T00:00:02.000Z",
           updatedAt: "2026-02-24T00:00:03.000Z",
           archivedAt: null,
           deletedAt: null,
-          queuedFollowUps: [],
           messages: [
             {
               id: asMessageId("message-1"),
@@ -427,7 +461,13 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       const threadDetail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-1"));
       assert.equal(threadDetail._tag, "Some");
       if (threadDetail._tag === "Some") {
-        assert.deepEqual(threadDetail.value, snapshot.threads[0]);
+        assert.deepEqual(
+          {
+            ...threadDetail.value,
+            forkOrigin: threadDetail.value.forkOrigin ?? null,
+          },
+          snapshot.threads[0],
+        );
       }
     }),
   );

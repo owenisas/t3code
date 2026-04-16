@@ -81,6 +81,25 @@ describe("waitForHttpReady", () => {
     await expect(waitPromise).rejects.toBeInstanceOf(BackendReadinessAbortedError);
   });
 
+  it("uses a default timeout long enough for slower local backend startup", async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 503 }));
+
+    const waitPromise = waitForHttpReady("http://127.0.0.1:3773", {
+      fetchImpl,
+      intervalMs: 0,
+    });
+
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(fetchImpl).toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1_500);
+    await expect(waitPromise).rejects.toThrow(
+      "Timed out waiting for backend readiness at http://127.0.0.1:3773.",
+    );
+    vi.useRealTimers();
+  });
+
   it("recognizes aborted readiness errors", () => {
     expect(isBackendReadinessAborted(new BackendReadinessAbortedError())).toBe(true);
     expect(isBackendReadinessAborted(new Error("nope"))).toBe(false);

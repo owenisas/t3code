@@ -5,8 +5,10 @@ import {
   type MessageId,
   type ModelSelection,
   type OrchestrationEvent,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderKind,
   type OrchestrationSession,
+  type OrchestrationThread,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
@@ -85,6 +87,8 @@ const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
+const FORK_CONTEXT_TRANSCRIPT_MAX_CHARS = Math.min(60_000, PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+const FORK_CONTEXT_MESSAGE_MAX_CHARS = 12_000;
 
 function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolean {
   const trimmedCurrentTitle = currentTitle.trim();
@@ -150,6 +154,84 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
 
   const safeFragment = branchFragment.length > 0 ? branchFragment : "update";
   return `${WORKTREE_BRANCH_PREFIX}/${safeFragment}`;
+}
+
+function summarizeForkContextMessage(message: OrchestrationThread["messages"][number]): string {
+  const roleLabel =
+    message.role === "assistant" ? "Assistant" : message.role === "system" ? "System" : "User";
+  const attachmentSummary =
+    message.attachments && message.attachments.length > 0
+      ? [
+          "",
+          ...message.attachments.map((attachment) => {
+            const sizeLabel = attachment.sizeBytes > 0 ? `, ${attachment.sizeBytes} bytes` : "";
+            return `Attachment: ${attachment.name} (${attachment.mimeType}${sizeLabel})`;
+          }),
+        ].join("\n")
+      : "";
+  const trimmedText = message.text.trim();
+  const messageText =
+    trimmedText.length === 0
+      ? "(No text content)"
+      : trimmedText.length > FORK_CONTEXT_MESSAGE_MAX_CHARS
+        ? `${trimmedText.slice(0, FORK_CONTEXT_MESSAGE_MAX_CHARS)}\n...[truncated]`
+        : trimmedText;
+
+  return `${roleLabel}:\n${messageText}${attachmentSummary}`;
+}
+
+function buildForkContextTranscript(
+  messages: ReadonlyArray<OrchestrationThread["messages"][number]>,
+): string | null {
+  const blocks = messages.map(summarizeForkContextMessage);
+  if (blocks.length === 0) {
+    return null;
+  }
+
+  const keptBlocks: string[] = [];
+  let usedChars = 0;
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (!block) {
+      continue;
+    }
+    const separatorChars = keptBlocks.length > 0 ? 2 : 0;
+    if (usedChars + block.length + separatorChars > FORK_CONTEXT_TRANSCRIPT_MAX_CHARS) {
+      break;
+    }
+    keptBlocks.unshift(block);
+    usedChars += block.length + separatorChars;
+  }
+
+  if (keptBlocks.length === 0) {
+    return null;
+  }
+
+  const transcript = keptBlocks.join("\n\n");
+  return keptBlocks.length === blocks.length
+    ? transcript
+    : `[Earlier fork context omitted for length]\n\n${transcript}`;
+}
+
+function buildForkContinuationInput(input: {
+  readonly transcript: string;
+  readonly messageText: string;
+}): string {
+  const nextUserMessage =
+    input.messageText.trim().length > 0
+      ? input.messageText
+      : "(No additional text. Continue from the fork context and use any attached files or images.)";
+  return [
+    "You are continuing a forked coding session in the same project and workspace.",
+    "The workspace state has not been reverted. Treat the transcript below as prior conversation context for this fork.",
+    "Do not restart the task from scratch unless the new request requires it.",
+    "",
+    "Fork transcript:",
+    input.transcript,
+    "",
+    "New user message for this fork:",
+    nextUserMessage,
+  ].join("\n");
 }
 
 const make = Effect.gen(function* () {
@@ -599,6 +681,25 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    const shouldHydrateForkContext =
+      thread.forkOrigin != null && thread.forkOrigin.hydratedAt === null;
+    const forkTranscript = shouldHydrateForkContext
+      ? (() => {
+          const messageIndex = thread.messages.findIndex((entry) => entry.id === message.id);
+          if (messageIndex <= 0) {
+            return null;
+          }
+          return buildForkContextTranscript(thread.messages.slice(0, messageIndex));
+        })()
+      : null;
+    const providerInput =
+      forkTranscript === null
+        ? message.text
+        : buildForkContinuationInput({
+            transcript: forkTranscript,
+            messageText: message.text,
+          });
+
     const isFirstUserMessageTurn =
       thread.messages.filter((entry) => entry.role === "user").length === 1;
     if (isFirstUserMessageTurn) {
@@ -629,27 +730,38 @@ const make = Effect.gen(function* () {
       }
     }
 
-    yield* sendTurnForThread({
-      threadId: event.payload.threadId,
-      messageText: message.text,
-      ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
-      ...(event.payload.modelSelection !== undefined
-        ? { modelSelection: event.payload.modelSelection }
-        : {}),
-      interactionMode: event.payload.interactionMode,
-      createdAt: event.payload.createdAt,
-    }).pipe(
-      Effect.catchCause((cause) =>
-        appendProviderFailureActivity({
-          threadId: event.payload.threadId,
-          kind: "provider.turn.start.failed",
-          summary: "Provider turn start failed",
-          detail: Cause.pretty(cause),
-          turnId: null,
-          createdAt: event.payload.createdAt,
-        }),
-      ),
+    const sendTurnExit = yield* Effect.exit(
+      sendTurnForThread({
+        threadId: event.payload.threadId,
+        messageText: providerInput,
+        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+        ...(event.payload.modelSelection !== undefined
+          ? { modelSelection: event.payload.modelSelection }
+          : {}),
+        interactionMode: event.payload.interactionMode,
+        createdAt: event.payload.createdAt,
+      }),
     );
+    if (sendTurnExit._tag === "Failure") {
+      yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.start.failed",
+        summary: "Provider turn start failed",
+        detail: Cause.pretty(sendTurnExit.cause),
+        turnId: null,
+        createdAt: event.payload.createdAt,
+      });
+      return;
+    }
+
+    if (forkTranscript !== null) {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.fork-context.hydrate",
+        commandId: serverCommandId("thread-fork-context-hydrate"),
+        threadId: event.payload.threadId,
+        hydratedAt: event.payload.createdAt,
+      });
+    }
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (

@@ -1828,6 +1828,118 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
+  it.effect("does not treat user-input requests as pending approvals", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+        eventStore
+          .append(event)
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+      yield* appendAndProject({
+        type: "project.created",
+        eventId: EventId.make("evt-user-input-approval-1"),
+        aggregateKind: "project",
+        aggregateId: ProjectId.make("project-user-input-approval"),
+        occurredAt: "2026-02-26T13:00:00.000Z",
+        commandId: CommandId.make("cmd-user-input-approval-1"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-user-input-approval-1"),
+        metadata: {},
+        payload: {
+          projectId: ProjectId.make("project-user-input-approval"),
+          title: "Project User Input Approval",
+          workspaceRoot: "/tmp/project-user-input-approval",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-02-26T13:00:00.000Z",
+          updatedAt: "2026-02-26T13:00:00.000Z",
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.created",
+        eventId: EventId.make("evt-user-input-approval-2"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-user-input-approval"),
+        occurredAt: "2026-02-26T13:00:01.000Z",
+        commandId: CommandId.make("cmd-user-input-approval-2"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-user-input-approval-2"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-user-input-approval"),
+          projectId: ProjectId.make("project-user-input-approval"),
+          title: "Thread User Input Approval",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: "2026-02-26T13:00:01.000Z",
+          updatedAt: "2026-02-26T13:00:01.000Z",
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-user-input-approval-3"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-user-input-approval"),
+        occurredAt: "2026-02-26T13:00:02.000Z",
+        commandId: CommandId.make("cmd-user-input-approval-3"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-user-input-approval-3"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-user-input-approval"),
+          activity: {
+            id: EventId.make("activity-user-input-approval-requested"),
+            tone: "info",
+            kind: "user-input.requested",
+            summary: "User input requested",
+            payload: {
+              requestId: "user-input-request-only",
+            },
+            turnId: null,
+            createdAt: "2026-02-26T13:00:02.000Z",
+          },
+        },
+      });
+
+      const approvalRows = yield* sql<{
+        readonly requestId: string;
+      }>`
+        SELECT request_id AS "requestId"
+        FROM projection_pending_approvals
+        WHERE request_id = 'user-input-request-only'
+      `;
+      assert.deepEqual(approvalRows, []);
+
+      const threadRows = yield* sql<{
+        readonly pendingApprovalCount: number;
+        readonly pendingUserInputCount: number;
+      }>`
+        SELECT
+          pending_approval_count AS "pendingApprovalCount",
+          pending_user_input_count AS "pendingUserInputCount"
+        FROM projection_threads
+        WHERE thread_id = 'thread-user-input-approval'
+      `;
+      assert.deepEqual(threadRows, [
+        {
+          pendingApprovalCount: 0,
+          pendingUserInputCount: 1,
+        },
+      ]);
+    }),
+  );
+
   it.effect("does not fallback-retain messages whose turnId is removed by revert", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;

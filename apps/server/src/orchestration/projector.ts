@@ -29,6 +29,7 @@ import {
   ThreadArchivedPayload,
   ThreadCreatedPayload,
   ThreadDeletedPayload,
+  ThreadForkContextHydratedPayload,
   ThreadFollowUpQueuedPayload,
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
@@ -436,6 +437,7 @@ export function projectEvent(
             worktreePath: payload.worktreePath,
             latestTurn: null,
             queuedFollowUps: [],
+            forkOrigin: payload.forkOrigin ?? null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             archivedAt: null,
@@ -466,6 +468,27 @@ export function projectEvent(
             updatedAt: payload.deletedAt,
           }),
         })),
+      );
+
+    case "thread.fork-context-hydrated":
+      return decodeForEvent(
+        ThreadForkContextHydratedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const existingThread = nextBase.threads.find((thread) => thread.id === payload.threadId);
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              forkOrigin: existingThread?.forkOrigin
+                ? { ...existingThread.forkOrigin, hydratedAt: payload.hydratedAt }
+                : null,
+              updatedAt: payload.updatedAt,
+            }),
+          };
+        }),
       );
 
     case "thread.archived":

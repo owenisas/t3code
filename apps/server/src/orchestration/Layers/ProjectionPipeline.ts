@@ -110,6 +110,16 @@ function isStalePendingApprovalFailureDetail(detail: string | null): boolean {
   );
 }
 
+function isPendingApprovalActivityKind(
+  kind: ProjectionThreadActivity["kind"],
+): kind is "approval.requested" | "approval.resolved" | "provider.approval.respond.failed" {
+  return (
+    kind === "approval.requested" ||
+    kind === "approval.resolved" ||
+    kind === "provider.approval.respond.failed"
+  );
+}
+
 function derivePendingUserInputCountFromActivities(
   activities: ReadonlyArray<ProjectionThreadActivity>,
 ): number {
@@ -776,6 +786,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            forkSourceThreadId: event.payload.forkOrigin?.sourceThreadId ?? null,
+            forkSourceMessageId: event.payload.forkOrigin?.sourceMessageId ?? null,
+            forkContextHydratedAt: event.payload.forkOrigin?.hydratedAt ?? null,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -882,6 +895,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existingRow.value,
             deletedAt: event.payload.deletedAt,
             updatedAt: event.payload.deletedAt,
+          });
+          return;
+        }
+
+        case "thread.fork-context-hydrated": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            forkContextHydratedAt: event.payload.hydratedAt,
+            updatedAt: event.payload.updatedAt,
           });
           return;
         }
@@ -1464,6 +1492,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
         case "thread.activity-appended": {
+          if (!isPendingApprovalActivityKind(event.payload.activity.kind)) {
+            return;
+          }
           const requestId =
             extractActivityRequestId(event.payload.activity.payload) ??
             event.metadata.requestId ??

@@ -356,6 +356,13 @@ export const OrchestrationQueuedFollowUp = Schema.Struct({
 });
 export type OrchestrationQueuedFollowUp = typeof OrchestrationQueuedFollowUp.Type;
 
+export const OrchestrationThreadForkOrigin = Schema.Struct({
+  sourceThreadId: ThreadId,
+  sourceMessageId: MessageId,
+  hydratedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+});
+export type OrchestrationThreadForkOrigin = typeof OrchestrationThreadForkOrigin.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -370,6 +377,11 @@ export const OrchestrationThread = Schema.Struct({
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   queuedFollowUps: Schema.Array(OrchestrationQueuedFollowUp).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  forkOrigin: Schema.optional(
+    Schema.NullOr(OrchestrationThreadForkOrigin).pipe(
+      Schema.withDecodingDefault(Effect.succeed(null)),
+    ),
   ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -582,6 +594,16 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+});
+
+const ThreadForkCommand = Schema.Struct({
+  type: Schema.Literal("thread.fork"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sourceThreadId: ThreadId,
+  sourceMessageId: MessageId,
+  title: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 
@@ -804,6 +826,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ScheduledJobDeleteCommand,
   ScheduledJobRunTriggerCommand,
   ThreadCreateCommand,
+  ThreadForkCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -833,6 +856,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ScheduledJobDeleteCommand,
   ScheduledJobRunTriggerCommand,
   ThreadCreateCommand,
+  ThreadForkCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -907,6 +931,13 @@ const ThreadActivityAppendCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadForkContextHydrateCommand = Schema.Struct({
+  type: Schema.Literal("thread.fork-context.hydrate"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  hydratedAt: IsoDateTime,
+});
+
 const ThreadRevertCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.revert.complete"),
   commandId: CommandId,
@@ -932,6 +963,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
+  ThreadForkContextHydrateCommand,
   ThreadRevertCompleteCommand,
   ScheduledJobRunCompleteCommand,
 ]);
@@ -955,6 +987,7 @@ export const OrchestrationEventType = Schema.Literals([
   "scheduled-job.run-started",
   "scheduled-job.run-completed",
   "thread.created",
+  "thread.fork-context-hydrated",
   "thread.deleted",
   "thread.archived",
   "thread.unarchived",
@@ -1067,7 +1100,18 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  forkOrigin: Schema.optional(
+    Schema.NullOr(OrchestrationThreadForkOrigin).pipe(
+      Schema.withDecodingDefault(Effect.succeed(null)),
+    ),
+  ),
   createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadForkContextHydratedPayload = Schema.Struct({
+  threadId: ThreadId,
+  hydratedAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
 
@@ -1286,6 +1330,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.created"),
     payload: ThreadCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.fork-context-hydrated"),
+    payload: ThreadForkContextHydratedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

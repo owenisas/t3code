@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import { EnvironmentId, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type EnvironmentState, useStore } from "../store";
 import { type Thread } from "../types";
@@ -7,6 +7,7 @@ import { type Thread } from "../types";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
+  cloneUserMessageImagesForComposer,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
@@ -91,6 +92,86 @@ describe("resolveSendEnvMode", () => {
   it("forces local mode for non-git repositories", () => {
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: false })).toBe("local");
     expect(resolveSendEnvMode({ requestedEnvMode: "local", isGitRepo: false })).toBe("local");
+  });
+});
+
+describe("cloneUserMessageImagesForComposer", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("hydrates composer images from persisted user message attachments", async () => {
+    const createObjectURL = vi.fn(() => "blob:forked-image");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("image-bytes", { status: 200 })),
+    );
+    vi.stubGlobal(
+      "URL",
+      Object.assign(URL, {
+        createObjectURL,
+      }),
+    );
+
+    const images = await cloneUserMessageImagesForComposer({
+      id: MessageId.make("message-1"),
+      role: "user",
+      text: "",
+      turnId: null,
+      createdAt: "2026-04-13T20:00:00.000Z",
+      completedAt: "2026-04-13T20:00:01.000Z",
+      streaming: false,
+      attachments: [
+        {
+          type: "image",
+          id: "attachment-1",
+          name: "diagram.png",
+          mimeType: "image/png",
+          sizeBytes: 11,
+          previewUrl: "http://localhost/attachment-1",
+        },
+      ],
+    });
+
+    expect(images).toHaveLength(1);
+    expect(images[0]).toMatchObject({
+      type: "image",
+      name: "diagram.png",
+      mimeType: "image/png",
+      previewUrl: "blob:forked-image",
+    });
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips attachments that fail to load", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network failed");
+      }),
+    );
+
+    const images = await cloneUserMessageImagesForComposer({
+      id: MessageId.make("message-2"),
+      role: "user",
+      text: "",
+      turnId: null,
+      createdAt: "2026-04-13T20:00:00.000Z",
+      completedAt: "2026-04-13T20:00:01.000Z",
+      streaming: false,
+      attachments: [
+        {
+          type: "image",
+          id: "attachment-2",
+          name: "broken.png",
+          mimeType: "image/png",
+          sizeBytes: 11,
+          previewUrl: "http://localhost/broken",
+        },
+      ],
+    });
+
+    expect(images).toEqual([]);
   });
 });
 

@@ -19,6 +19,7 @@ import {
   findLatestProposedPlan,
   findSidebarProposedPlan,
   hasActionableProposedPlan,
+  hasActiveRunningTurn,
   hasToolActivityForTurn,
   isLatestTurnSettled,
 } from "./session-logic";
@@ -1260,6 +1261,26 @@ describe("isLatestTurnSettled", () => {
         },
         null,
       ),
+    ).toBe(false);
+  });
+});
+
+describe("hasActiveRunningTurn", () => {
+  it("returns true when the session is running with an active turn id", () => {
+    expect(
+      hasActiveRunningTurn({
+        orchestrationStatus: "running",
+        activeTurnId: TurnId.make("turn-1"),
+      }),
+    ).toBe(true);
+  });
+
+  it("returns false after restart when the session is ready", () => {
+    expect(
+      hasActiveRunningTurn({
+        orchestrationStatus: "ready",
+        activeTurnId: undefined,
+      }),
     ).toBe(false);
   });
 });

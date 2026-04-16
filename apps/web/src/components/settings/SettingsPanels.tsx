@@ -26,6 +26,7 @@ import {
   ScheduledJobRunId,
   ThreadId,
   type DesktopUpdateChannel,
+  type ThreadFollowUpMode,
   type ScopedThreadRef,
   type ProviderKind,
   type ServerProvider,
@@ -71,6 +72,7 @@ import {
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "../../lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import { buildScheduledJobCreateCommand } from "../../scheduledJobs";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
@@ -115,6 +117,11 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const ACTIVE_TURN_FOLLOW_UP_MODE_LABELS: Record<ThreadFollowUpMode, string> = {
+  steer: "Steer running turn",
+  queue: "Queue behind running turn",
+};
 
 type InstallProviderSettings = {
   provider: ProviderKind;
@@ -464,6 +471,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
+      ...(settings.activeTurnFollowUpMode !== DEFAULT_UNIFIED_SETTINGS.activeTurnFollowUpMode
+        ? ["Running turn follow-up"]
+        : []),
       ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
         ? ["Archive confirmation"]
         : []),
@@ -476,6 +486,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     [
       areProviderSettingsDirty,
       isGitWritingModelDirty,
+      settings.activeTurnFollowUpMode,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
@@ -966,6 +977,47 @@ export function GeneralSettingsPanel() {
               spellCheck={false}
               aria-label="Add project base directory"
             />
+          }
+        />
+
+        <SettingsRow
+          title="Running turn follow-up"
+          description="Choose what the main send action does while the current turn is still responding."
+          resetAction={
+            settings.activeTurnFollowUpMode !== DEFAULT_UNIFIED_SETTINGS.activeTurnFollowUpMode ? (
+              <SettingResetButton
+                label="running turn follow-up"
+                onClick={() =>
+                  updateSettings({
+                    activeTurnFollowUpMode: DEFAULT_UNIFIED_SETTINGS.activeTurnFollowUpMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.activeTurnFollowUpMode}
+              onValueChange={(value) => {
+                if (value === "steer" || value === "queue") {
+                  updateSettings({ activeTurnFollowUpMode: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-56" aria-label="Running turn follow-up mode">
+                <SelectValue>
+                  {ACTIVE_TURN_FOLLOW_UP_MODE_LABELS[settings.activeTurnFollowUpMode]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="steer">
+                  {ACTIVE_TURN_FOLLOW_UP_MODE_LABELS.steer}
+                </SelectItem>
+                <SelectItem hideIndicator value="queue">
+                  {ACTIVE_TURN_FOLLOW_UP_MODE_LABELS.queue}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
 
@@ -1720,25 +1772,20 @@ export function ScheduledJobsPanel() {
           createdAt: new Date().toISOString(),
         });
       } else {
-        await api.orchestration.dispatchCommand({
-          type: "scheduled-job.create",
-          commandId: CommandId.make(crypto.randomUUID()),
-          jobId: ScheduledJobId.make(crypto.randomUUID()),
-          projectId: project.id,
-          title: formState.title,
-          prompt: formState.prompt,
-          modelSelection: {
-            provider: formState.provider,
-            model: formState.model,
-          },
-          runtimeMode: formState.runtimeMode,
-          interactionMode: formState.interactionMode,
-          schedule: {
-            type: "interval",
-            intervalMinutes: intervalHours * 60,
-          },
-          createdAt: new Date().toISOString(),
-        });
+        await api.orchestration.dispatchCommand(
+          buildScheduledJobCreateCommand({
+            projectId: project.id,
+            title: formState.title,
+            prompt: formState.prompt,
+            modelSelection: {
+              provider: formState.provider,
+              model: formState.model,
+            },
+            runtimeMode: formState.runtimeMode,
+            interactionMode: formState.interactionMode,
+            intervalHours,
+          }),
+        );
       }
       resetForm();
     } finally {

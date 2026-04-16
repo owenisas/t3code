@@ -1,4 +1,5 @@
 import type {
+  MessageId,
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationReadModel,
@@ -19,6 +20,7 @@ import {
 import { computeNextScheduledJobRunAt, formatScheduledJobThreadTitle } from "./scheduledJobs.ts";
 
 const nowIso = () => new Date().toISOString();
+const DEFAULT_FORK_THREAD_TITLE_SUFFIX = " (fork)";
 const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload"> = {
   eventId: crypto.randomUUID() as OrchestrationEvent["eventId"],
   aggregateKind: "thread",
@@ -32,6 +34,18 @@ const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload">
 
 function isThreadTurnRunning(thread: OrchestrationReadModel["threads"][number]): boolean {
   return thread.session?.status === "running" && thread.session.activeTurnId !== null;
+}
+
+function buildForkThreadTitle(sourceTitle: string, explicitTitle?: string): string {
+  const normalizedExplicitTitle = explicitTitle?.trim();
+  if (normalizedExplicitTitle && normalizedExplicitTitle.length > 0) {
+    return normalizedExplicitTitle;
+  }
+  const normalizedSourceTitle = sourceTitle.trim();
+  if (normalizedSourceTitle.endsWith(DEFAULT_FORK_THREAD_TITLE_SUFFIX)) {
+    return normalizedSourceTitle;
+  }
+  return `${normalizedSourceTitle}${DEFAULT_FORK_THREAD_TITLE_SUFFIX}`;
 }
 
 function withEventBase(
@@ -346,6 +360,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: job.interactionMode,
           branch: null,
           worktreePath: null,
+          forkOrigin: null,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -449,10 +464,94 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          forkOrigin: null,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
       };
+    }
+
+    case "thread.fork": {
+      const sourceThread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.sourceThreadId,
+      });
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+
+      const sourceMessageIndex = sourceThread.messages.findIndex(
+        (message) => message.id === command.sourceMessageId,
+      );
+      if (sourceMessageIndex < 0) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message '${command.sourceMessageId}' was not found on thread '${command.sourceThreadId}'.`,
+        });
+      }
+
+      const sourceMessage = sourceThread.messages[sourceMessageIndex];
+      if (!sourceMessage || sourceMessage.role !== "user") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Only user messages can be used as fork points.",
+        });
+      }
+
+      const threadCreatedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.created",
+        payload: {
+          threadId: command.threadId,
+          projectId: sourceThread.projectId,
+          title: buildForkThreadTitle(sourceThread.title, command.title),
+          modelSelection: sourceThread.modelSelection,
+          runtimeMode: sourceThread.runtimeMode,
+          interactionMode: sourceThread.interactionMode,
+          branch: sourceThread.branch,
+          worktreePath: sourceThread.worktreePath,
+          forkOrigin: {
+            sourceThreadId: command.sourceThreadId,
+            sourceMessageId: command.sourceMessageId,
+            hydratedAt: null,
+          },
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+
+      const copiedMessageEvents: ReadonlyArray<Omit<OrchestrationEvent, "sequence">> =
+        sourceThread.messages.slice(0, sourceMessageIndex).map((message, index) => ({
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: message.createdAt,
+            commandId: command.commandId,
+          }),
+          ...(index === 0 ? { causationEventId: threadCreatedEvent.eventId } : {}),
+          type: "thread.message-sent" as const,
+          payload: {
+            threadId: command.threadId,
+            messageId: crypto.randomUUID() as MessageId,
+            role: message.role,
+            text: message.text,
+            ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+            turnId: null,
+            streaming: false,
+            createdAt: message.createdAt,
+            updatedAt: message.updatedAt,
+          },
+        }));
+
+      return [threadCreatedEvent, ...copiedMessageEvents];
     }
 
     case "thread.delete": {
@@ -1047,6 +1146,28 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           activity: command.activity,
+        },
+      };
+    }
+
+    case "thread.fork-context.hydrate": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.hydratedAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.fork-context-hydrated",
+        payload: {
+          threadId: command.threadId,
+          hydratedAt: command.hydratedAt,
+          updatedAt: command.hydratedAt,
         },
       };
     }

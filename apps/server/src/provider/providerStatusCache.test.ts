@@ -15,6 +15,7 @@ const makeProvider = (
   overrides?: Partial<ServerProvider>,
 ): ServerProvider => ({
   provider,
+  schedulingSupport: "external-info",
   enabled: true,
   installed: true,
   version: "1.0.0",

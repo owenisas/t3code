@@ -24,7 +24,6 @@ interface ComposerPrimaryActionsProps {
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
   runningFollowUpMode: ThreadFollowUpMode;
-  queuedFollowUpCount: number;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onQueueFollowUp: () => void;
@@ -50,6 +49,11 @@ export const formatPendingPrimaryActionLabel = (input: {
   return input.questionIndex > 0 ? "Submit answers" : "Submit answer";
 };
 
+export const getRunningFollowUpActionLabels = (mode: ThreadFollowUpMode) => ({
+  primaryLabel: mode === "queue" ? "Queue" : "Steer",
+  alternateLabel: mode === "queue" ? "Steer instead" : "Queue instead",
+});
+
 export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   compact,
   pendingAction,
@@ -61,7 +65,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isPreparingWorktree,
   hasSendableContent,
   runningFollowUpMode,
-  queuedFollowUpCount,
   onPreviousPendingQuestion,
   onInterrupt,
   onQueueFollowUp,
@@ -117,17 +120,10 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 
   if (isRunning) {
     if (hasSendableContent && !isSendBusy && !isConnecting) {
-      const primaryLabel = runningFollowUpMode === "queue" ? "Queue" : "Steer";
+      const { primaryLabel, alternateLabel } = getRunningFollowUpActionLabels(runningFollowUpMode);
       const onPrimaryFollowUp = runningFollowUpMode === "queue" ? onQueueFollowUp : onSteerFollowUp;
       return (
         <div className="flex items-center justify-end gap-2">
-          {queuedFollowUpCount > 0 ? (
-            <span className="text-muted-foreground text-xs">
-              {queuedFollowUpCount === 1
-                ? "1 follow-up queued"
-                : `${queuedFollowUpCount} follow-ups queued`}
-            </span>
-          ) : null}
           <Button
             type="submit"
             size="sm"
@@ -155,7 +151,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                   void (runningFollowUpMode === "queue" ? onSteerFollowUp() : onQueueFollowUp())
                 }
               >
-                {runningFollowUpMode === "queue" ? "Steer instead" : "Queue instead"}
+                {alternateLabel}
               </MenuItem>
               <MenuItem onClick={() => void onInterrupt()}>Stop current turn</MenuItem>
             </MenuPopup>

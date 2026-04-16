@@ -360,6 +360,75 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
+  it("sends the forked draft message directly when there is no earlier fork transcript", async () => {
+    const harness = await createHarness();
+    const sourceTurnAt = "2026-04-12T12:01:00.000Z";
+    const forkedAt = "2026-04-12T12:02:00.000Z";
+    const forkTurnAt = "2026-04-12T12:03:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-source-turn-start"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("message-source-user-1"),
+          role: "user",
+          text: "Trace the failing OAuth callback.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: sourceTurnAt,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-thread-fork"),
+        threadId: ThreadId.make("thread-fork"),
+        sourceThreadId: ThreadId.make("thread-1"),
+        sourceMessageId: asMessageId("message-source-user-1"),
+        createdAt: forkedAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-fork-turn-start"),
+        threadId: ThreadId.make("thread-fork"),
+        message: {
+          messageId: asMessageId("message-fork-user-1"),
+          role: "user",
+          text: "Keep going from the callback handler.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: forkTurnAt,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    const forkSendInput = harness.sendTurn.mock.calls[1]?.[0] as {
+      threadId: ThreadId;
+      input?: string;
+    };
+    expect(forkSendInput).toMatchObject({
+      threadId: ThreadId.make("thread-fork"),
+    });
+    expect(forkSendInput.input).toBe("Keep going from the callback handler.");
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const forkedThread = readModel.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-fork"),
+    );
+    expect(forkedThread?.forkOrigin?.hydratedAt).toBeNull();
+  });
+
   it("generates a thread title on the first turn", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

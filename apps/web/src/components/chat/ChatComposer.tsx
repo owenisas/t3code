@@ -68,6 +68,7 @@ import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
+import { ComposerQueuedFollowUps } from "./ComposerQueuedFollowUps";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
@@ -278,7 +279,6 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   isConnecting: boolean;
   hasSendableContent: boolean;
   runningFollowUpMode: ThreadFollowUpMode;
-  queuedFollowUpCount: number;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onQueueFollowUp: () => void;
@@ -302,7 +302,6 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         isPreparingWorktree={props.isPreparingWorktree}
         hasSendableContent={props.hasSendableContent}
         runningFollowUpMode={props.runningFollowUpMode}
-        queuedFollowUpCount={props.queuedFollowUpCount}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
         onQueueFollowUp={props.onQueueFollowUp}
@@ -368,6 +367,7 @@ export interface ChatComposerProps {
 
   // Session phase
   phase: SessionPhase;
+  hasActiveRunningTurn: boolean;
   isConnecting: boolean;
   isSendBusy: boolean;
   isPreparingWorktree: boolean;
@@ -751,6 +751,13 @@ export const ChatComposer = memo(
             command: "default",
             label: "/default",
             description: "Switch this thread back to normal build mode",
+          },
+          {
+            id: "slash:schedule",
+            type: "slash-command",
+            command: "schedule",
+            label: "/schedule",
+            description: "Create a recurring project job, for example: /schedule every 6h Prompt",
           },
         ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
         const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
@@ -1398,6 +1405,24 @@ export const ChatComposer = memo(
             }
             return;
           }
+          if (item.command === "schedule") {
+            const replacement = "/schedule every 6h ";
+            const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+              snapshot.value,
+              trigger.rangeEnd,
+              replacement,
+            );
+            const applied = applyPromptReplacement(
+              trigger.rangeStart,
+              replacementRangeEnd,
+              replacement,
+              { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+            );
+            if (applied) {
+              setComposerHighlightedItemId(null);
+            }
+            return;
+          }
           void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
             expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -1875,6 +1900,8 @@ export const ChatComposer = memo(
                   </div>
                 )}
 
+              <ComposerQueuedFollowUps followUps={activeThread?.queuedFollowUps ?? []} />
+
               <ComposerPromptEditor
                 ref={composerEditorRef}
                 value={
@@ -1994,7 +2021,7 @@ export const ChatComposer = memo(
                     compact={isComposerPrimaryActionsCompact}
                     activeContextWindow={activeContextWindow}
                     pendingAction={pendingPrimaryAction}
-                    isRunning={phase === "running"}
+                    isRunning={props.hasActiveRunningTurn}
                     showPlanFollowUpPrompt={
                       pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                     }
@@ -2004,7 +2031,6 @@ export const ChatComposer = memo(
                     isPreparingWorktree={isPreparingWorktree}
                     hasSendableContent={composerSendState.hasSendableContent}
                     runningFollowUpMode={settings.activeTurnFollowUpMode}
-                    queuedFollowUpCount={activeThread?.queuedFollowUps.length ?? 0}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
                     onQueueFollowUp={handleQueueFollowUpPrimaryAction}

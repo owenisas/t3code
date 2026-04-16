@@ -35,7 +35,7 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import { useGitStatus } from "~/lib/gitStatusState";
 import { usePrimaryEnvironmentId } from "../environments/primary";
-import { readEnvironmentApi } from "../environmentApi";
+import { ensureEnvironmentApi, readEnvironmentApi } from "../environmentApi";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -55,6 +55,7 @@ import {
   findLatestProposedPlan,
   deriveWorkLogEntries,
   hasActionableProposedPlan,
+  hasActiveRunningTurn,
   hasToolActivityForTurn,
   isLatestTurnSettled,
   formatElapsed,
@@ -115,6 +116,7 @@ import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelection } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { deriveLogicalProjectKey } from "../logicalProject";
+import { buildScheduledJobCreateCommand, parseScheduleSlashCommand } from "../scheduledJobs";
 import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
@@ -147,6 +149,7 @@ import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
+  cloneUserMessageImagesForComposer,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -669,6 +672,7 @@ export default function ChatView(props: ChatViewProps) {
   >({});
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
+  const [forkingMessageId, setForkingMessageId] = useState<MessageId | null>(null);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
@@ -828,6 +832,7 @@ export default function ChatView(props: ChatViewProps) {
     });
   }, [activeThreadKey, existingOpenTerminalThreadKeys, terminalState.terminalOpen]);
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
+  const activeThreadHasRunningTurn = hasActiveRunningTurn(activeThread?.session ?? null);
   const activeProjectRef = activeThread
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
@@ -1199,6 +1204,15 @@ export default function ChatView(props: ChatViewProps) {
     });
   }, []);
   const serverMessages = activeThread?.messages;
+  const forkableUserMessageIds = useMemo(
+    () =>
+      new Set(
+        (activeThread?.messages ?? [])
+          .filter((message) => message.role === "user")
+          .map((message) => message.id),
+      ),
+    [activeThread?.messages],
+  );
   useEffect(() => {
     if (typeof Image === "undefined" || !serverMessages || serverMessages.length === 0) {
       return;
@@ -2345,7 +2359,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const submitComposer = async (activeRunMode?: ThreadFollowUpMode) => {
     const effectiveActiveRunMode =
-      !latestTurnSettled && isServerThread
+      activeThreadHasRunningTurn && isServerThread
         ? (activeRunMode ?? settings.activeTurnFollowUpMode)
         : null;
     const api = readEnvironmentApi(environmentId);
@@ -2394,6 +2408,62 @@ export default function ChatView(props: ChatViewProps) {
       composerImages.length === 0 && sendableComposerTerminalContexts.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
+    const scheduleSlashCommand = parseScheduleSlashCommand(trimmed);
+    if (scheduleSlashCommand) {
+      if (composerImages.length > 0 || sendableComposerTerminalContexts.length > 0) {
+        toastManager.add({
+          type: "error",
+          title: "Schedule commands only support text prompts",
+          description: "Remove attachments or terminal context before creating a scheduled job.",
+        });
+        return;
+      }
+      if (scheduleSlashCommand.kind === "error") {
+        toastManager.add({
+          type: "error",
+          title: "Invalid schedule command",
+          description: scheduleSlashCommand.error,
+        });
+        return;
+      }
+      if (!activeProject) {
+        return;
+      }
+      const scheduleModelSelection: ModelSelection = {
+        provider: ctxSelectedProvider,
+        model:
+          ctxSelectedModelSelection.model ||
+          (activeProject.defaultModelSelection?.provider === ctxSelectedProvider
+            ? activeProject.defaultModelSelection.model
+            : null) ||
+          DEFAULT_MODEL_BY_PROVIDER[ctxSelectedProvider],
+        ...(ctxSelectedModelSelection.options
+          ? { options: ctxSelectedModelSelection.options }
+          : {}),
+      };
+      await ensureEnvironmentApi(activeProject.environmentId).orchestration.dispatchCommand(
+        buildScheduledJobCreateCommand({
+          projectId: activeProject.id,
+          title: scheduleSlashCommand.title,
+          prompt: scheduleSlashCommand.prompt,
+          modelSelection: scheduleModelSelection,
+          runtimeMode,
+          interactionMode,
+          intervalHours: scheduleSlashCommand.intervalHours,
+        }),
+      );
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      toastManager.add({
+        type: "success",
+        title: `Created scheduled job: ${scheduleSlashCommand.title}`,
+        description: `Runs every ${scheduleSlashCommand.intervalHours} hour${
+          scheduleSlashCommand.intervalHours === 1 ? "" : "s"
+        }. Manage it from Jobs.`,
+      });
+      return;
+    }
     if (standaloneSlashCommand) {
       handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
@@ -3233,6 +3303,83 @@ export default function ChatView(props: ChatViewProps) {
   revertTurnCountRef.current = revertTurnCountByUserMessageId;
   const onRevertToTurnCountRef = useRef(onRevertToTurnCount);
   onRevertToTurnCountRef.current = onRevertToTurnCount;
+  const onForkUserMessage = useCallback(
+    async (messageId: MessageId) => {
+      const api = readEnvironmentApi(environmentId);
+      if (
+        !api ||
+        !activeThread ||
+        !isServerThread ||
+        forkingMessageId !== null ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
+
+      const sourceMessage = activeThread.messages.find((message) => message.id === messageId);
+      if (!sourceMessage || sourceMessage.role !== "user") {
+        return;
+      }
+
+      const nextThreadId = newThreadId();
+      const nextThreadRef = scopeThreadRef(activeThread.environmentId, nextThreadId);
+      const createdAt = new Date().toISOString();
+      setForkingMessageId(messageId);
+
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.fork",
+          commandId: newCommandId(),
+          threadId: nextThreadId,
+          sourceThreadId: activeThread.id,
+          sourceMessageId: messageId,
+          createdAt,
+        })
+        .then(() =>
+          waitForStartedServerThread(scopeThreadRef(activeThread.environmentId, nextThreadId)),
+        )
+        .then(async () => {
+          clearComposerDraftContent(nextThreadRef);
+          setComposerDraftPrompt(nextThreadRef, sourceMessage.text);
+          const clonedImages = await cloneUserMessageImagesForComposer(sourceMessage);
+          if (clonedImages.length > 0) {
+            addComposerDraftImages(nextThreadRef, clonedImages);
+          }
+        })
+        .then(() =>
+          navigate({
+            to: "/$environmentId/$threadId",
+            params: {
+              environmentId: activeThread.environmentId,
+              threadId: nextThreadId,
+            },
+          }),
+        )
+        .catch((error: unknown) => {
+          toastManager.add({
+            type: "error",
+            title: "Could not fork thread",
+            description:
+              error instanceof Error
+                ? error.message
+                : "An error occurred while creating the forked thread.",
+          });
+        })
+        .finally(() => {
+          setForkingMessageId((current) => (current === messageId ? null : current));
+        });
+    },
+    [
+      activeThread,
+      addComposerDraftImages,
+      clearComposerDraftContent,
+      environmentId,
+      forkingMessageId,
+      isServerThread,
+      navigate,
+      setComposerDraftPrompt,
+    ],
+  );
   const onRevertUserMessage = useCallback((messageId: MessageId) => {
     const targetTurnCount = revertTurnCountRef.current.get(messageId);
     if (typeof targetTurnCount !== "number") {
@@ -3319,6 +3466,10 @@ export default function ChatView(props: ChatViewProps) {
               onOpenTurnDiff={onOpenTurnDiff}
               revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
               onRevertUserMessage={onRevertUserMessage}
+              canForkUserMessages={isServerThread}
+              forkableUserMessageIds={forkableUserMessageIds}
+              forkingMessageId={forkingMessageId}
+              onForkUserMessage={onForkUserMessage}
               isRevertingCheckpoint={isRevertingCheckpoint}
               onImageExpand={onExpandTimelineImage}
               markdownCwd={gitCwd ?? undefined}
@@ -3358,6 +3509,7 @@ export default function ChatView(props: ChatViewProps) {
               isServerThread={isServerThread}
               isLocalDraftThread={isLocalDraftThread}
               phase={phase}
+              hasActiveRunningTurn={activeThreadHasRunningTurn}
               isConnecting={isConnecting}
               isSendBusy={isSendBusy}
               isPreparingWorktree={isPreparingWorktree}

@@ -8,9 +8,13 @@ export interface WaitForHttpReadyOptions {
   readonly isReady?: (response: Response) => boolean;
 }
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+// Production startup depends on a separate server process reaching readiness on a
+// loaded local machine. Ten seconds has proven too tight and can cause the
+// shell to quit just before the backend begins listening.
+const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_INTERVAL_MS = 100;
 const DEFAULT_REQUEST_TIMEOUT_MS = 1_000;
+const DEFAULT_READINESS_PATH = "/.well-known/t3/environment";
 
 export class BackendReadinessAbortedError extends Error {
   constructor() {
@@ -59,7 +63,7 @@ export async function waitForHttpReady(
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const intervalMs = options?.intervalMs ?? DEFAULT_INTERVAL_MS;
   const requestTimeoutMs = options?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-  const readinessPath = options?.path ?? "/";
+  const readinessPath = options?.path ?? DEFAULT_READINESS_PATH;
   const isReady = options?.isReady ?? ((response: Response) => response.ok);
   const deadline = Date.now() + timeoutMs;
 

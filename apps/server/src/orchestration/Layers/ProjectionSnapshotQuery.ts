@@ -345,6 +345,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          fork_source_thread_id AS "forkSourceThreadId",
+          fork_source_message_id AS "forkSourceMessageId",
+          fork_context_hydrated_at AS "forkContextHydratedAt",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -651,6 +654,25 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
         ORDER BY created_at ASC, message_id ASC
+      `,
+  });
+
+  const listThreadQueuedFollowUpRowsByThread = SqlSchema.findAll({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionThreadQueuedFollowUpDbRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          follow_up_id AS "followUpId",
+          thread_id AS "threadId",
+          message_id AS "messageId",
+          text,
+          attachments_json AS "attachments",
+          model_selection_json AS "modelSelection",
+          queued_at AS "queuedAt"
+        FROM projection_thread_queued_follow_ups
+        WHERE thread_id = ${threadId}
+        ORDER BY queued_at ASC, follow_up_id ASC
       `,
   });
 
@@ -1111,6 +1133,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 interactionMode: row.interactionMode,
                 branch: row.branch,
                 worktreePath: row.worktreePath,
+                forkOrigin:
+                  row.forkSourceThreadId != null && row.forkSourceMessageId != null
+                    ? {
+                        sourceThreadId: row.forkSourceThreadId,
+                        sourceMessageId: row.forkSourceMessageId,
+                        hydratedAt: row.forkContextHydratedAt ?? null,
+                      }
+                    : null,
                 latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                 queuedFollowUps: queuedFollowUpsByThread.get(row.threadId) ?? [],
                 createdAt: row.createdAt,
@@ -1468,6 +1498,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       const [
         threadRow,
         messageRows,
+        queuedFollowUpRows,
         proposedPlanRows,
         activityRows,
         checkpointRows,
@@ -1487,6 +1518,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             toPersistenceSqlOrDecodeError(
               "ProjectionSnapshotQuery.getThreadDetailById:listMessages:query",
               "ProjectionSnapshotQuery.getThreadDetailById:listMessages:decodeRows",
+            ),
+          ),
+        ),
+        listThreadQueuedFollowUpRowsByThread({ threadId }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getThreadDetailById:listQueuedFollowUps:query",
+              "ProjectionSnapshotQuery.getThreadDetailById:listQueuedFollowUps:decodeRows",
             ),
           ),
         ),
@@ -1546,6 +1585,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+        queuedFollowUps: queuedFollowUpRows.map((row) => ({
+          id: row.followUpId,
+          messageId: row.messageId,
+          text: row.text,
+          attachments: row.attachments ?? [],
+          modelSelection: row.modelSelection,
+          queuedAt: row.queuedAt,
+        })),
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,

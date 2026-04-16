@@ -82,6 +82,10 @@ interface TimelineRowSharedState {
   workspaceRoot: string | undefined;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
+  canForkUserMessages: boolean;
+  forkableUserMessageIds: ReadonlySet<MessageId> | undefined;
+  forkingMessageId: MessageId | null;
+  onForkUserMessage: ((messageId: MessageId) => void) | undefined;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }
@@ -106,6 +110,10 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
+  canForkUserMessages?: boolean;
+  forkableUserMessageIds?: ReadonlySet<MessageId>;
+  forkingMessageId?: MessageId | null;
+  onForkUserMessage?: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
@@ -134,6 +142,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
+  canForkUserMessages = false,
+  forkableUserMessageIds,
+  forkingMessageId = null,
+  onForkUserMessage,
   isRevertingCheckpoint,
   onImageExpand,
   activeThreadEnvironmentId,
@@ -205,6 +217,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workspaceRoot,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      canForkUserMessages,
+      forkableUserMessageIds,
+      forkingMessageId,
+      onForkUserMessage,
       onImageExpand,
       onOpenTurnDiff,
     }),
@@ -221,6 +237,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workspaceRoot,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      canForkUserMessages,
+      forkableUserMessageIds,
+      forkingMessageId,
+      onForkUserMessage,
       onImageExpand,
       onOpenTurnDiff,
     ],
@@ -304,6 +324,11 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
           const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
           const terminalContexts = displayedUserMessage.contexts;
           const canRevertAgentWork = typeof row.revertTurnCount === "number";
+          const canForkFromMessage =
+            ctx.canForkUserMessages &&
+            typeof ctx.onForkUserMessage === "function" &&
+            (ctx.forkableUserMessageIds?.has(row.message.id) ?? true);
+          const isForkingThisMessage = ctx.forkingMessageId === row.message.id;
           return (
             <div className="flex justify-end">
               <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
@@ -353,6 +378,18 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                   <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
                     {displayedUserMessage.copyText && (
                       <MessageCopyButton text={displayedUserMessage.copyText} />
+                    )}
+                    {canForkFromMessage && (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        disabled={isForkingThisMessage || ctx.forkingMessageId !== null}
+                        onClick={() => ctx.onForkUserMessage?.(row.message.id)}
+                        title="Fork a new thread from this message"
+                      >
+                        {isForkingThisMessage ? "Forking..." : "Fork"}
+                      </Button>
                     )}
                     {canRevertAgentWork && (
                       <Button

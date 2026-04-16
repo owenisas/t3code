@@ -1503,6 +1503,7 @@ function applyEnvironmentOrchestrationEvent(
           worktreePath: event.payload.worktreePath,
           latestTurn: null,
           queuedFollowUps: [],
+          forkOrigin: event.payload.forkOrigin ?? null,
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
           archivedAt: null,

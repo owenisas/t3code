@@ -1795,6 +1795,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const providers = [
         {
           provider: "codex" as const,
+          schedulingSupport: "external-info" as const,
           enabled: true,
           installed: true,
           version: "1.0.0",
@@ -1865,6 +1866,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const nextProviders = [
         {
           provider: "codex" as const,
+          schedulingSupport: "external-info" as const,
           enabled: true,
           installed: true,
           version: "1.0.0",

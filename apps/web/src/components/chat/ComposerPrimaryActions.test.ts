@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { formatPendingPrimaryActionLabel } from "./ComposerPrimaryActions";
+import {
+  formatPendingPrimaryActionLabel,
+  getRunningFollowUpActionLabels,
+} from "./ComposerPrimaryActions";
 
 describe("formatPendingPrimaryActionLabel", () => {
   it("returns 'Submitting...' while responding", () => {
@@ -89,5 +92,21 @@ describe("formatPendingPrimaryActionLabel", () => {
         questionIndex: 5,
       }),
     ).toBe("Submit answers");
+  });
+});
+
+describe("getRunningFollowUpActionLabels", () => {
+  it("defaults running turns to steer copy", () => {
+    expect(getRunningFollowUpActionLabels("steer")).toEqual({
+      primaryLabel: "Steer",
+      alternateLabel: "Queue instead",
+    });
+  });
+
+  it("returns queue-focused copy when queue mode is selected", () => {
+    expect(getRunningFollowUpActionLabels("queue")).toEqual({
+      primaryLabel: "Queue",
+      alternateLabel: "Steer instead",
+    });
   });
 });

@@ -61,8 +61,10 @@ describe("orchestration projector", () => {
               model: "gpt-5-codex",
             },
             runtimeMode: "full-access",
+            interactionMode: "default",
             branch: null,
             worktreePath: null,
+            forkOrigin: null,
             createdAt: now,
             updatedAt: now,
           },
@@ -85,6 +87,7 @@ describe("orchestration projector", () => {
         branch: null,
         worktreePath: null,
         latestTurn: null,
+        forkOrigin: null,
         createdAt: now,
         updatedAt: now,
         archivedAt: null,
@@ -93,9 +96,74 @@ describe("orchestration projector", () => {
         proposedPlans: [],
         activities: [],
         checkpoints: [],
+        queuedFollowUps: [],
         session: null,
       },
     ]);
+  });
+
+  it("hydrates fork origin state when thread.fork-context-hydrated is applied", async () => {
+    const createdAt = "2026-04-12T12:00:00.000Z";
+    const hydratedAt = "2026-04-12T12:05:00.000Z";
+    const created = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(createdAt),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: createdAt,
+          commandId: "cmd-thread-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            forkOrigin: {
+              sourceThreadId: "thread-source",
+              sourceMessageId: "message-source",
+              hydratedAt: null,
+            },
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+
+    const hydrated = await Effect.runPromise(
+      projectEvent(
+        created,
+        makeEvent({
+          sequence: 2,
+          type: "thread.fork-context-hydrated",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: hydratedAt,
+          commandId: "cmd-thread-hydrate",
+          payload: {
+            threadId: "thread-1",
+            hydratedAt,
+            updatedAt: hydratedAt,
+          },
+        }),
+      ),
+    );
+
+    expect(hydrated.threads[0]?.forkOrigin).toEqual({
+      sourceThreadId: "thread-source",
+      sourceMessageId: "message-source",
+      hydratedAt,
+    });
+    expect(hydrated.threads[0]?.updatedAt).toBe(hydratedAt);
   });
 
   it("fails when event payload cannot be decoded by runtime schema", async () => {

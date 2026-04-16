@@ -23,7 +23,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
 } from "@t3tools/contracts";
-import { Effect, Layer, Option, PubSub, Schema, SchemaIssue, Stream } from "effect";
+import { Cause, Effect, Layer, Option, PubSub, Schema, SchemaIssue, Stream } from "effect";
 
 import {
   increment,
@@ -35,7 +35,8 @@ import {
   providerTurnMetricAttributes,
   withMetrics,
 } from "../../observability/Metrics.ts";
-import { ProviderValidationError } from "../Errors.ts";
+import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
+import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderService, type ProviderServiceShape } from "../Services/ProviderService.ts";
 import {
@@ -142,6 +143,29 @@ function readPersistedCwd(
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function messageIncludesClaudeMissingConversation(message: string | undefined): boolean {
+  if (!message) {
+    return false;
+  }
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("no conversation found") || normalized.includes("conversation not found")
+  );
+}
+
+function isClaudeStaleResumeError(cause: unknown): boolean {
+  if (!(cause instanceof Error)) {
+    return false;
+  }
+
+  if (!messageIncludesClaudeMissingConversation(cause.message)) {
+    return false;
+  }
+
+  const provider = "provider" in cause ? cause.provider : undefined;
+  return provider === "claudeAgent";
+}
+
 const makeProviderService = Effect.fn("makeProviderService")(function* (
   options?: ProviderServiceLiveOptions,
 ) {
@@ -194,6 +218,41 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       eventType: event.type,
     }).pipe(Effect.andThen(publishRuntimeEvent(event)));
 
+  const startSessionWithFallback = Effect.fn("startSessionWithFallback")(function* (input: {
+    readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
+    readonly sessionInput: ProviderSessionStartInput;
+    readonly fallbackReason: "recover" | "start";
+  }) {
+    const { resumeCursor: _ignoredResumeCursor, ...baseSessionInput } = input.sessionInput;
+    const attempt = (resumeCursor: ProviderSessionStartInput["resumeCursor"]) =>
+      input.adapter.startSession({
+        ...baseSessionInput,
+        ...(resumeCursor !== undefined ? { resumeCursor } : {}),
+      });
+
+    const initialResumeCursor = input.sessionInput.resumeCursor;
+    return yield* attempt(initialResumeCursor).pipe(
+      Effect.catchCause((cause) => {
+        const error = Cause.squash(cause);
+        if (
+          input.adapter.provider !== "claudeAgent" ||
+          initialResumeCursor === undefined ||
+          !isClaudeStaleResumeError(error)
+        ) {
+          return Effect.failCause(cause);
+        }
+
+        return analytics
+          .record("provider.session.resume_fallback", {
+            provider: input.adapter.provider,
+            operation: input.fallbackReason,
+            reason: "stale-remote-conversation",
+          })
+          .pipe(Effect.andThen(attempt(undefined)));
+      }),
+    );
+  });
+
   yield* Effect.forEach(adapters, (adapter) =>
     Stream.runForEach(adapter.streamEvents, processRuntimeEvent).pipe(Effect.forkScoped),
   ).pipe(Effect.asVoid);
@@ -238,13 +297,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
-      const resumed = yield* adapter.startSession({
-        threadId: input.binding.threadId,
-        provider: input.binding.provider,
-        ...(persistedCwd ? { cwd: persistedCwd } : {}),
-        ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
-        ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
-        runtimeMode: input.binding.runtimeMode ?? "full-access",
+      const resumed = yield* startSessionWithFallback({
+        adapter,
+        sessionInput: {
+          threadId: input.binding.threadId,
+          provider: input.binding.provider,
+          ...(persistedCwd ? { cwd: persistedCwd } : {}),
+          ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
+          ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
+          runtimeMode: input.binding.runtimeMode ?? "full-access",
+        },
+        fallbackReason: "recover",
       });
       if (resumed.provider !== adapter.provider) {
         return yield* toValidationError(
@@ -340,9 +403,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             ? persistedBinding.resumeCursor
             : undefined);
         const adapter = yield* registry.getByProvider(input.provider);
-        const session = yield* adapter.startSession({
-          ...input,
-          ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
+        const session = yield* startSessionWithFallback({
+          adapter,
+          sessionInput: {
+            ...input,
+            ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
+          },
+          fallbackReason: "start",
         });
 
         if (session.provider !== adapter.provider) {
