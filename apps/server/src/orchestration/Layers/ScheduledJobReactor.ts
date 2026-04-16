@@ -5,14 +5,20 @@ import {
   ScheduledJobRunId,
   ThreadId,
 } from "@t3tools/contracts";
-import { Duration, Effect, Layer, Stream } from "effect";
+import { Duration, Effect, FileSystem, Layer, Path, Stream } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { createHash } from "node:crypto";
 
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   ScheduledJobReactor,
   type ScheduledJobReactorShape,
 } from "../Services/ScheduledJobReactor.ts";
+import {
+  parseScheduledJobManifest,
+  scheduledJobIdForManifest,
+  T3_JOB_MANIFEST_RELATIVE_PATH,
+} from "../jobManifests.ts";
 
 type CompletionEvent = Extract<
   OrchestrationEvent,
@@ -24,12 +30,19 @@ type CompletionEvent = Extract<
 type ScheduledJobTask =
   | { readonly type: "reconcile" }
   | { readonly type: "scan" }
+  | { readonly type: "manifest-scan" }
   | { readonly type: "completion-event"; readonly event: CompletionEvent };
 
 const POLL_INTERVAL = Duration.seconds(30);
 
 const serverCommandId = (tag: string): CommandId =>
   CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
+
+const manifestCommandId = (tag: string, projectId: string, localId: string, fingerprint: string) =>
+  CommandId.make(`server:job-manifest:${tag}:${projectId}:${localId}:${fingerprint}`);
+
+const fingerprintJson = (value: unknown): string =>
+  createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
 
 function completionInputForThreadEvent(event: CompletionEvent): {
   readonly outcome: "succeeded" | "failed" | "interrupted";
@@ -80,6 +93,8 @@ function completionInputForThreadEvent(event: CompletionEvent): {
 
 const makeScheduledJobReactor = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
   const triggerDueJobs = Effect.fn("triggerDueJobs")(function* () {
     const readModel = yield* orchestrationEngine.getReadModel();
@@ -189,6 +204,165 @@ const makeScheduledJobReactor = Effect.gen(function* () {
     }
   });
 
+  const scanJobManifests = Effect.fn("scanJobManifests")(function* () {
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const nowIso = new Date().toISOString();
+    for (const project of readModel.projects) {
+      if (project.deletedAt !== null) {
+        continue;
+      }
+
+      const manifestPath = path.join(project.workspaceRoot, T3_JOB_MANIFEST_RELATIVE_PATH);
+      if (!(yield* fs.exists(manifestPath))) {
+        continue;
+      }
+
+      const rawManifest = yield* fs.readFileString(manifestPath).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("failed to read T3 scheduled job manifest", {
+            projectId: project.id,
+            manifestPath,
+            cause,
+          }).pipe(Effect.as(null)),
+        ),
+      );
+      if (rawManifest === null) {
+        continue;
+      }
+
+      const parsed = parseScheduledJobManifest(rawManifest, project.defaultModelSelection);
+      for (const error of parsed.errors) {
+        yield* Effect.logWarning("invalid T3 scheduled job manifest entry", {
+          projectId: project.id,
+          manifestPath,
+          error,
+        });
+      }
+
+      for (const manifestJob of parsed.jobs) {
+        const jobId = scheduledJobIdForManifest(project.id, manifestJob.localId);
+        const existingJob = readModel.scheduledJobs.find((job) => job.id === jobId) ?? null;
+        const schedule = {
+          type: "interval" as const,
+          intervalMinutes: manifestJob.intervalMinutes,
+        };
+        const fingerprint = fingerprintJson({
+          title: manifestJob.title,
+          prompt: manifestJob.prompt,
+          modelSelection: manifestJob.modelSelection,
+          runtimeMode: manifestJob.runtimeMode,
+          interactionMode: manifestJob.interactionMode,
+          status: manifestJob.status,
+          schedule,
+        });
+
+        if (!existingJob) {
+          yield* orchestrationEngine
+            .dispatch({
+              type: "scheduled-job.create",
+              commandId: manifestCommandId("create", project.id, manifestJob.localId, fingerprint),
+              jobId,
+              projectId: project.id,
+              title: manifestJob.title,
+              prompt: manifestJob.prompt,
+              modelSelection: manifestJob.modelSelection,
+              runtimeMode: manifestJob.runtimeMode,
+              interactionMode: manifestJob.interactionMode,
+              schedule,
+              createdAt: nowIso,
+            })
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("failed to import T3 scheduled job manifest entry", {
+                  projectId: project.id,
+                  localId: manifestJob.localId,
+                  cause,
+                }),
+              ),
+            );
+          if (manifestJob.status === "paused") {
+            yield* orchestrationEngine
+              .dispatch({
+                type: "scheduled-job.pause",
+                commandId: manifestCommandId("pause", project.id, manifestJob.localId, fingerprint),
+                jobId,
+                createdAt: nowIso,
+              })
+              .pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("failed to pause imported T3 scheduled job manifest entry", {
+                    projectId: project.id,
+                    localId: manifestJob.localId,
+                    cause,
+                  }),
+                ),
+              );
+          }
+          continue;
+        }
+
+        const needsUpdate =
+          existingJob.title !== manifestJob.title ||
+          existingJob.prompt !== manifestJob.prompt ||
+          existingJob.modelSelection.provider !== manifestJob.modelSelection.provider ||
+          existingJob.modelSelection.model !== manifestJob.modelSelection.model ||
+          existingJob.runtimeMode !== manifestJob.runtimeMode ||
+          existingJob.interactionMode !== manifestJob.interactionMode ||
+          existingJob.schedule.intervalMinutes !== manifestJob.intervalMinutes;
+
+        if (needsUpdate) {
+          yield* orchestrationEngine
+            .dispatch({
+              type: "scheduled-job.update",
+              commandId: manifestCommandId("update", project.id, manifestJob.localId, fingerprint),
+              jobId,
+              title: manifestJob.title,
+              prompt: manifestJob.prompt,
+              modelSelection: manifestJob.modelSelection,
+              runtimeMode: manifestJob.runtimeMode,
+              interactionMode: manifestJob.interactionMode,
+              schedule,
+              createdAt: nowIso,
+            })
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("failed to update T3 scheduled job manifest entry", {
+                  projectId: project.id,
+                  localId: manifestJob.localId,
+                  cause,
+                }),
+              ),
+            );
+        }
+
+        if (existingJob.status !== manifestJob.status) {
+          yield* orchestrationEngine
+            .dispatch({
+              type:
+                manifestJob.status === "paused" ? "scheduled-job.pause" : "scheduled-job.resume",
+              commandId: manifestCommandId(
+                manifestJob.status === "paused" ? "pause" : "resume",
+                project.id,
+                manifestJob.localId,
+                fingerprint,
+              ),
+              jobId,
+              createdAt: nowIso,
+            })
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("failed to sync T3 scheduled job manifest status", {
+                  projectId: project.id,
+                  localId: manifestJob.localId,
+                  cause,
+                }),
+              ),
+            );
+        }
+      }
+    }
+  });
+
   const handleCompletionEvent = Effect.fn("handleCompletionEvent")(function* (
     event: CompletionEvent,
   ) {
@@ -231,13 +405,16 @@ const makeScheduledJobReactor = Effect.gen(function* () {
         return reconcileActiveRuns();
       case "scan":
         return triggerDueJobs();
+      case "manifest-scan":
+        return scanJobManifests();
       case "completion-event":
-        return handleCompletionEvent(task.event);
+        return handleCompletionEvent(task.event).pipe(Effect.andThen(scanJobManifests()));
     }
   });
 
   const start: ScheduledJobReactorShape["start"] = Effect.fn("start")(function* () {
     yield* worker.enqueue({ type: "reconcile" });
+    yield* worker.enqueue({ type: "manifest-scan" });
     yield* worker.enqueue({ type: "scan" });
 
     yield* Stream.runForEach(
@@ -253,6 +430,7 @@ const makeScheduledJobReactor = Effect.gen(function* () {
     yield* Effect.forever(
       Effect.sleep(POLL_INTERVAL).pipe(
         Effect.flatMap(() => worker.enqueue({ type: "reconcile" })),
+        Effect.flatMap(() => worker.enqueue({ type: "manifest-scan" })),
         Effect.flatMap(() => worker.enqueue({ type: "scan" })),
       ),
     ).pipe(Effect.forkScoped);

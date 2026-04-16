@@ -23,6 +23,8 @@ describe("parseJobSlashCommand", () => {
     expect(parsed.content).toBe("every 6h Check the repo for build failures");
     expect(parsed.injectedPrompt).toContain("T3 Code's /job helper");
     expect(parsed.injectedPrompt).toContain("T3 Code scheduled job rules:");
+    expect(parsed.injectedPrompt).toContain(".t3/jobs.json");
+    expect(parsed.injectedPrompt).toContain("create or update .t3/jobs.json directly");
     expect(parsed.injectedPrompt).toContain("User job content:");
     expect(parsed.injectedPrompt).toContain("every 6h Check the repo for build failures");
   });
