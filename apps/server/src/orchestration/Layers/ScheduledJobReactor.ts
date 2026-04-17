@@ -15,8 +15,11 @@ import {
   type ScheduledJobReactorShape,
 } from "../Services/ScheduledJobReactor.ts";
 import {
+  applyScheduledJobManifestPatch,
   parseScheduledJobManifest,
+  parseScheduledJobManifestId,
   scheduledJobIdForManifest,
+  type ScheduledJobManifestPatch,
   T3_JOB_MANIFEST_RELATIVE_PATH,
 } from "../jobManifests.ts";
 
@@ -27,13 +30,26 @@ type CompletionEvent = Extract<
   }
 >;
 
+type ManifestWritableJobEvent = Extract<
+  OrchestrationEvent,
+  {
+    type:
+      | "scheduled-job.updated"
+      | "scheduled-job.paused"
+      | "scheduled-job.resumed"
+      | "scheduled-job.deleted";
+  }
+>;
+
 type ScheduledJobTask =
   | { readonly type: "reconcile" }
   | { readonly type: "scan" }
   | { readonly type: "manifest-scan" }
-  | { readonly type: "completion-event"; readonly event: CompletionEvent };
+  | { readonly type: "completion-event"; readonly event: CompletionEvent }
+  | { readonly type: "manifest-write-back"; readonly event: ManifestWritableJobEvent };
 
 const POLL_INTERVAL = Duration.seconds(30);
+const MANIFEST_COMMAND_PREFIX = "server:job-manifest:";
 
 const serverCommandId = (tag: string): CommandId =>
   CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
@@ -43,6 +59,34 @@ const manifestCommandId = (tag: string, projectId: string, localId: string, fing
 
 const fingerprintJson = (value: unknown): string =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
+
+const isManifestCommandId = (commandId: CommandId | null): boolean =>
+  commandId !== null && String(commandId).startsWith(MANIFEST_COMMAND_PREFIX);
+
+function manifestPatchForEvent(event: ManifestWritableJobEvent): ScheduledJobManifestPatch {
+  switch (event.type) {
+    case "scheduled-job.deleted":
+      return { type: "delete" };
+    case "scheduled-job.paused":
+      return { type: "status", status: "paused" };
+    case "scheduled-job.resumed":
+      return { type: "status", status: "active" };
+    case "scheduled-job.updated": {
+      const payload = event.payload;
+      return {
+        type: "update",
+        ...(payload.title !== undefined ? { title: payload.title } : {}),
+        ...(payload.prompt !== undefined ? { prompt: payload.prompt } : {}),
+        ...(payload.modelSelection !== undefined ? { modelSelection: payload.modelSelection } : {}),
+        ...(payload.runtimeMode !== undefined ? { runtimeMode: payload.runtimeMode } : {}),
+        ...(payload.interactionMode !== undefined
+          ? { interactionMode: payload.interactionMode }
+          : {}),
+        ...(payload.schedule !== undefined ? { schedule: payload.schedule } : {}),
+      };
+    }
+  }
+}
 
 function completionInputForThreadEvent(event: CompletionEvent): {
   readonly outcome: "succeeded" | "failed" | "interrupted";
@@ -242,6 +286,9 @@ const makeScheduledJobReactor = Effect.gen(function* () {
       for (const manifestJob of parsed.jobs) {
         const jobId = scheduledJobIdForManifest(project.id, manifestJob.localId);
         const existingJob = readModel.scheduledJobs.find((job) => job.id === jobId) ?? null;
+        if (existingJob && existingJob.deletedAt !== null) {
+          continue;
+        }
         const schedule = {
           type: "interval" as const,
           intervalMinutes: manifestJob.intervalMinutes,
@@ -399,6 +446,72 @@ const makeScheduledJobReactor = Effect.gen(function* () {
       );
   });
 
+  const handleManifestWriteBack = Effect.fn("handleManifestWriteBack")(function* (
+    event: ManifestWritableJobEvent,
+  ) {
+    if (isManifestCommandId(event.commandId)) {
+      return;
+    }
+
+    const manifestId = parseScheduledJobManifestId(event.payload.jobId);
+    if (!manifestId) {
+      return;
+    }
+
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const project = readModel.projects.find(
+      (entry) => entry.id === manifestId.projectId && entry.deletedAt === null,
+    );
+    if (!project) {
+      return;
+    }
+
+    const manifestPath = path.join(project.workspaceRoot, T3_JOB_MANIFEST_RELATIVE_PATH);
+    if (!(yield* fs.exists(manifestPath))) {
+      return;
+    }
+
+    const rawManifest = yield* fs.readFileString(manifestPath).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("failed to read T3 scheduled job manifest for write-back", {
+          projectId: project.id,
+          localId: manifestId.localId,
+          manifestPath,
+          cause,
+        }).pipe(Effect.as(null)),
+      ),
+    );
+    if (rawManifest === null) {
+      return;
+    }
+
+    const patch = manifestPatchForEvent(event);
+
+    const result = applyScheduledJobManifestPatch(rawManifest, manifestId.localId, patch);
+    for (const error of result.errors) {
+      yield* Effect.logWarning("failed to update T3 scheduled job manifest", {
+        projectId: project.id,
+        localId: manifestId.localId,
+        manifestPath,
+        error,
+      });
+    }
+    if (!result.changed || result.errors.length > 0) {
+      return;
+    }
+
+    yield* fs.writeFileString(manifestPath, result.rawJson).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("failed to write T3 scheduled job manifest", {
+          projectId: project.id,
+          localId: manifestId.localId,
+          manifestPath,
+          cause,
+        }),
+      ),
+    );
+  });
+
   const worker = yield* makeDrainableWorker((task: ScheduledJobTask) => {
     switch (task.type) {
       case "reconcile":
@@ -409,6 +522,8 @@ const makeScheduledJobReactor = Effect.gen(function* () {
         return scanJobManifests();
       case "completion-event":
         return handleCompletionEvent(task.event).pipe(Effect.andThen(scanJobManifests()));
+      case "manifest-write-back":
+        return handleManifestWriteBack(task.event);
     }
   });
 
@@ -425,6 +540,19 @@ const makeScheduledJobReactor = Effect.gen(function* () {
         ),
       ),
       (event) => worker.enqueue({ type: "completion-event", event }),
+    ).pipe(Effect.forkScoped);
+
+    yield* Stream.runForEach(
+      orchestrationEngine.streamDomainEvents.pipe(
+        Stream.filter(
+          (event): event is ManifestWritableJobEvent =>
+            event.type === "scheduled-job.updated" ||
+            event.type === "scheduled-job.paused" ||
+            event.type === "scheduled-job.resumed" ||
+            event.type === "scheduled-job.deleted",
+        ),
+      ),
+      (event) => worker.enqueue({ type: "manifest-write-back", event }),
     ).pipe(Effect.forkScoped);
 
     yield* Effect.forever(

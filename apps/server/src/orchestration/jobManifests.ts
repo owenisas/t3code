@@ -1,10 +1,11 @@
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   type ModelSelection,
-  type ProjectId,
+  ProjectId,
   type ProviderInteractionMode,
   type ProviderKind,
   ScheduledJobId,
+  type ScheduledJobSchedule,
   type RuntimeMode,
 } from "@t3tools/contracts";
 
@@ -23,6 +24,30 @@ export interface ScheduledJobManifestEntry {
 
 export interface ScheduledJobManifestParseResult {
   readonly jobs: ReadonlyArray<ScheduledJobManifestEntry>;
+  readonly errors: ReadonlyArray<string>;
+}
+
+export type ScheduledJobManifestPatch =
+  | {
+      readonly type: "update";
+      readonly title?: string;
+      readonly prompt?: string;
+      readonly modelSelection?: ModelSelection;
+      readonly runtimeMode?: RuntimeMode;
+      readonly interactionMode?: ProviderInteractionMode;
+      readonly schedule?: ScheduledJobSchedule;
+    }
+  | {
+      readonly type: "status";
+      readonly status: "active" | "paused";
+    }
+  | {
+      readonly type: "delete";
+    };
+
+export interface ScheduledJobManifestPatchResult {
+  readonly rawJson: string;
+  readonly changed: boolean;
   readonly errors: ReadonlyArray<string>;
 }
 
@@ -83,6 +108,24 @@ function readManifestJobs(value: unknown): ReadonlyArray<unknown> | null {
 
 export function scheduledJobIdForManifest(projectId: ProjectId, localId: string): ScheduledJobId {
   return ScheduledJobId.make(`manifest:${projectId}:${localId}`);
+}
+
+export function parseScheduledJobManifestId(
+  jobId: ScheduledJobId | string,
+): { readonly projectId: ProjectId; readonly localId: string } | null {
+  const parts = String(jobId).split(":");
+  if (parts.length !== 3 || parts[0] !== "manifest") {
+    return null;
+  }
+  const projectId = readNonEmptyString(parts[1]);
+  const localId = readNonEmptyString(parts[2]);
+  if (!projectId || !localId) {
+    return null;
+  }
+  return {
+    projectId: ProjectId.make(projectId),
+    localId,
+  };
 }
 
 export function parseScheduledJobManifest(
@@ -172,4 +215,98 @@ export function parseScheduledJobManifest(
   });
 
   return { jobs, errors };
+}
+
+export function applyScheduledJobManifestPatch(
+  rawJson: string,
+  localId: string,
+  patch: ScheduledJobManifestPatch,
+): ScheduledJobManifestPatchResult {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(rawJson);
+  } catch (error) {
+    return {
+      rawJson,
+      changed: false,
+      errors: [error instanceof Error ? error.message : "Invalid JSON."],
+    };
+  }
+
+  const rawJobs = readManifestJobs(decoded);
+  if (!rawJobs) {
+    return {
+      rawJson,
+      changed: false,
+      errors: ["Expected a JSON object with a jobs array, or a top-level jobs array."],
+    };
+  }
+
+  const jobIndex = rawJobs.findIndex((rawJob) => {
+    if (!isRecord(rawJob)) {
+      return false;
+    }
+    return readNonEmptyString(rawJob.id) === localId;
+  });
+  if (jobIndex === -1) {
+    return {
+      rawJson,
+      changed: false,
+      errors: [],
+    };
+  }
+
+  const nextJobs = [...rawJobs];
+  if (patch.type === "delete") {
+    nextJobs.splice(jobIndex, 1);
+  } else {
+    const existingJob = rawJobs[jobIndex];
+    if (!isRecord(existingJob)) {
+      return {
+        rawJson,
+        changed: false,
+        errors: [`Job '${localId}' is not an object.`],
+      };
+    }
+
+    const nextJob: Record<string, unknown> = { ...existingJob };
+    if (patch.type === "status") {
+      nextJob.status = patch.status;
+    } else {
+      if (patch.title !== undefined) {
+        nextJob.title = patch.title;
+      }
+      if (patch.prompt !== undefined) {
+        nextJob.prompt = patch.prompt;
+      }
+      if (patch.modelSelection !== undefined) {
+        nextJob.provider = patch.modelSelection.provider;
+        nextJob.model = patch.modelSelection.model;
+      }
+      if (patch.runtimeMode !== undefined) {
+        nextJob.runtimeMode = patch.runtimeMode;
+      }
+      if (patch.interactionMode !== undefined) {
+        nextJob.interactionMode = patch.interactionMode;
+      }
+      if (patch.schedule !== undefined) {
+        nextJob.intervalMinutes = patch.schedule.intervalMinutes;
+        delete nextJob.intervalHours;
+        delete nextJob.schedule;
+      }
+    }
+    nextJobs[jobIndex] = nextJob;
+  }
+
+  const nextDecoded = Array.isArray(decoded)
+    ? nextJobs
+    : isRecord(decoded)
+      ? { ...decoded, jobs: nextJobs }
+      : { jobs: nextJobs };
+
+  return {
+    rawJson: `${JSON.stringify(nextDecoded, null, 2)}\n`,
+    changed: true,
+    errors: [],
+  };
 }
