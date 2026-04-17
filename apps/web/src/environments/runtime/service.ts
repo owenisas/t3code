@@ -603,6 +603,9 @@ function applyShellEvent(event: OrchestrationShellStreamEvent, environmentId: En
     case "project-removed":
       syncProjectUiFromStore();
       return;
+    case "scheduled-job-upserted":
+    case "scheduled-job-removed":
+      return;
     case "thread-upserted":
       syncThreadUiFromStore();
       if (!previousThread && threadRef) {

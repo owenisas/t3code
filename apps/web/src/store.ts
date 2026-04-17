@@ -1966,6 +1966,30 @@ function applyEnvironmentShellEvent(
         projectIds: removeId(state.projectIds, event.projectId),
       };
     }
+    case "scheduled-job-upserted": {
+      const nextJob = mapScheduledJob(event.job, environmentId);
+      return {
+        ...state,
+        scheduledJobIds: state.scheduledJobIds.includes(nextJob.id)
+          ? state.scheduledJobIds
+          : [...state.scheduledJobIds, nextJob.id],
+        scheduledJobById: {
+          ...state.scheduledJobById,
+          [nextJob.id]: nextJob,
+        },
+      };
+    }
+    case "scheduled-job-removed": {
+      if (!state.scheduledJobById[event.jobId]) {
+        return state;
+      }
+      const { [event.jobId]: _removedJob, ...scheduledJobById } = state.scheduledJobById;
+      return {
+        ...state,
+        scheduledJobIds: removeId(state.scheduledJobIds, event.jobId),
+        scheduledJobById,
+      };
+    }
     case "thread-upserted":
       return writeThreadShellState(state, mapThreadShell(event.thread, environmentId));
     case "thread-removed":

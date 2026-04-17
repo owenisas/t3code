@@ -272,6 +272,33 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 projectId: event.payload.projectId,
               }),
             );
+          case "scheduled-job.created":
+          case "scheduled-job.updated":
+          case "scheduled-job.paused":
+          case "scheduled-job.resumed":
+          case "scheduled-job.run-started":
+          case "scheduled-job.run-completed": {
+            const jobId =
+              event.type === "scheduled-job.created" ? event.payload.job.id : event.payload.jobId;
+            return projectionSnapshotQuery.getScheduledJobById(jobId).pipe(
+              Effect.map((job) =>
+                Option.map(job, (nextJob) => ({
+                  kind: "scheduled-job-upserted" as const,
+                  sequence: event.sequence,
+                  job: nextJob,
+                })),
+              ),
+              Effect.catch(() => Effect.succeed(Option.none())),
+            );
+          }
+          case "scheduled-job.deleted":
+            return Effect.succeed(
+              Option.some({
+                kind: "scheduled-job-removed" as const,
+                sequence: event.sequence,
+                jobId: event.payload.jobId,
+              }),
+            );
           case "thread.deleted":
             return Effect.succeed(
               Option.some({

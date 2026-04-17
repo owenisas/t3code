@@ -462,6 +462,16 @@ export const OrchestrationShellStreamEvent = Schema.Union([
     projectId: ProjectId,
   }),
   Schema.Struct({
+    kind: Schema.Literal("scheduled-job-upserted"),
+    sequence: NonNegativeInt,
+    job: ScheduledJob,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("scheduled-job-removed"),
+    sequence: NonNegativeInt,
+    jobId: ScheduledJobId,
+  }),
+  Schema.Struct({
     kind: Schema.Literal("thread-upserted"),
     sequence: NonNegativeInt,
     thread: OrchestrationThreadShell,

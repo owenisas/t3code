@@ -15,6 +15,7 @@ import {
 import { describe, expect, it } from "vitest";
 
 import {
+  applyShellEvent,
   applyOrchestrationEvent,
   applyOrchestrationEvents,
   selectEnvironmentState,
@@ -575,6 +576,47 @@ describe("store shell snapshot sync", () => {
         projectId: "project-1",
       },
     ]);
+  });
+
+  it("applies scheduled job shell stream upserts and removals", () => {
+    const initialState = syncServerShellSnapshot(
+      makeState(makeThread()),
+      makeShellSnapshot(),
+      localEnvironmentId,
+    );
+    const job = makeShellScheduledJob({
+      id: ScheduledJobId.make("job-2"),
+      title: "Live job",
+    });
+
+    const withJob = applyShellEvent(
+      initialState,
+      {
+        kind: "scheduled-job-upserted",
+        sequence: 2,
+        job,
+      },
+      localEnvironmentId,
+    );
+
+    expect(scheduledJobsOf(withJob)).toMatchObject([
+      {
+        id: "job-2",
+        title: "Live job",
+      },
+    ]);
+
+    const withoutJob = applyShellEvent(
+      withJob,
+      {
+        kind: "scheduled-job-removed",
+        sequence: 3,
+        jobId: job.id,
+      },
+      localEnvironmentId,
+    );
+
+    expect(scheduledJobsOf(withoutJob)).toEqual([]);
   });
 
   it("replaces projects using snapshot order during recovery", () => {

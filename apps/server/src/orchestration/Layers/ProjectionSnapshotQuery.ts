@@ -138,6 +138,9 @@ const WorkspaceRootLookupInput = Schema.Struct({
 const ProjectIdLookupInput = Schema.Struct({
   projectId: ProjectId,
 });
+const ScheduledJobIdLookupInput = Schema.Struct({
+  jobId: ScheduledJob.fields.id,
+});
 const ThreadIdLookupInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -377,6 +380,57 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           outcome,
           error
         FROM projection_scheduled_job_runs
+        ORDER BY started_at DESC, run_id DESC
+      `,
+  });
+
+  const getActiveScheduledJobRowById = SqlSchema.findOneOption({
+    Request: ScheduledJobIdLookupInput,
+    Result: ProjectionScheduledJobDbRowSchema,
+    execute: ({ jobId }) =>
+      sql`
+        SELECT
+          job_id AS "jobId",
+          project_id AS "projectId",
+          title,
+          prompt,
+          model_selection_json AS "modelSelection",
+          runtime_mode AS "runtimeMode",
+          interaction_mode AS "interactionMode",
+          status,
+          schedule_json AS "schedule",
+          last_run_at AS "lastRunAt",
+          next_run_at AS "nextRunAt",
+          last_outcome AS "lastOutcome",
+          last_thread_id AS "lastThreadId",
+          last_error AS "lastError",
+          active_run_id AS "activeRunId",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          deleted_at AS "deletedAt"
+        FROM projection_scheduled_jobs
+        WHERE job_id = ${jobId}
+          AND deleted_at IS NULL
+        LIMIT 1
+      `,
+  });
+
+  const listScheduledJobRunRowsByJob = SqlSchema.findAll({
+    Request: ScheduledJobIdLookupInput,
+    Result: ProjectionScheduledJobRunDbRowSchema,
+    execute: ({ jobId }) =>
+      sql`
+        SELECT
+          run_id AS "runId",
+          job_id AS "jobId",
+          thread_id AS "threadId",
+          trigger,
+          started_at AS "startedAt",
+          completed_at AS "completedAt",
+          outcome,
+          error
+        FROM projection_scheduled_job_runs
+        WHERE job_id = ${jobId}
         ORDER BY started_at DESC, run_id DESC
       `,
   });
@@ -1445,6 +1499,34 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       ),
     );
 
+  const getScheduledJobById: ProjectionSnapshotQueryShape["getScheduledJobById"] = (jobId) =>
+    Effect.gen(function* () {
+      const [jobRow, runRows] = yield* Effect.all([
+        getActiveScheduledJobRowById({ jobId }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getScheduledJobById:getJob:query",
+              "ProjectionSnapshotQuery.getScheduledJobById:getJob:decodeRow",
+            ),
+          ),
+        ),
+        listScheduledJobRunRowsByJob({ jobId }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getScheduledJobById:listRuns:query",
+              "ProjectionSnapshotQuery.getScheduledJobById:listRuns:decodeRows",
+            ),
+          ),
+        ),
+      ]);
+
+      if (Option.isNone(jobRow)) {
+        return Option.none<ScheduledJob>();
+      }
+
+      return Option.some(mapScheduledJobRows([jobRow.value], runRows)[0]!);
+    });
+
   const getFirstActiveThreadIdByProjectId: ProjectionSnapshotQueryShape["getFirstActiveThreadIdByProjectId"] =
     (projectId) =>
       getFirstActiveThreadIdByProject({ projectId }).pipe(
@@ -1725,6 +1807,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getCounts,
     getActiveProjectByWorkspaceRoot,
     getProjectShellById,
+    getScheduledJobById,
     getFirstActiveThreadIdByProjectId,
     getThreadCheckpointContext,
     getThreadShellById,

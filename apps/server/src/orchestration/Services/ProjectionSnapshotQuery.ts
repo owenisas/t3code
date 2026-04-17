@@ -15,6 +15,8 @@ import type {
   OrchestrationThread,
   OrchestrationThreadShell,
   ProjectId,
+  ScheduledJob,
+  ScheduledJobId,
   ThreadId,
 } from "@t3tools/contracts";
 import { Context } from "effect";
@@ -77,6 +79,13 @@ export interface ProjectionSnapshotQueryShape {
   readonly getProjectShellById: (
     projectId: ProjectId,
   ) => Effect.Effect<Option.Option<OrchestrationProjectShell>, ProjectionRepositoryError>;
+
+  /**
+   * Read a single active scheduled job by id.
+   */
+  readonly getScheduledJobById: (
+    jobId: ScheduledJobId,
+  ) => Effect.Effect<Option.Option<ScheduledJob>, ProjectionRepositoryError>;
 
   /**
    * Read the earliest active thread for a project.
