@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type ClientSettings,
   DEFAULT_SERVER_SETTINGS,
   type DesktopBridge,
   EnvironmentId,
@@ -529,14 +530,21 @@ describe("wsApi", () => {
   });
 
   it("reads and writes persistence through the desktop bridge when available", async () => {
-    const getClientSettings = vi.fn().mockResolvedValue({
+    const clientSettings: ClientSettings = {
       confirmThreadArchive: true,
       confirmThreadDelete: false,
       diffWordWrap: true,
       activeTurnFollowUpMode: "steer",
-      sidebarProjectSortOrder: "manual",
-      sidebarThreadSortOrder: "created_at",
-      timestampFormat: "24-hour",
+      sidebarProjectGroupingMode: "repository_path" as const,
+      sidebarProjectGroupingOverrides: {
+        "environment-local:/tmp/project": "separate" as const,
+      },
+      sidebarProjectSortOrder: "manual" as const,
+      sidebarThreadSortOrder: "created_at" as const,
+      timestampFormat: "24-hour" as const,
+    };
+    const getClientSettings = vi.fn().mockResolvedValue({
+      ...clientSettings,
     });
     const setClientSettings = vi.fn().mockResolvedValue(undefined);
     const getSavedEnvironmentRegistry = vi.fn().mockResolvedValue([]);
@@ -558,15 +566,7 @@ describe("wsApi", () => {
     const api = createLocalApi(rpcClientMock as never);
 
     await api.persistence.getClientSettings();
-    await api.persistence.setClientSettings({
-      confirmThreadArchive: true,
-      confirmThreadDelete: false,
-      diffWordWrap: true,
-      activeTurnFollowUpMode: "steer",
-      sidebarProjectSortOrder: "manual",
-      sidebarThreadSortOrder: "created_at",
-      timestampFormat: "24-hour",
-    });
+    await api.persistence.setClientSettings(clientSettings);
     await api.persistence.getSavedEnvironmentRegistry();
     await api.persistence.setSavedEnvironmentRegistry([]);
     await api.persistence.getSavedEnvironmentSecret(EnvironmentId.make("environment-local"));
@@ -577,15 +577,7 @@ describe("wsApi", () => {
     await api.persistence.removeSavedEnvironmentSecret(EnvironmentId.make("environment-local"));
 
     expect(getClientSettings).toHaveBeenCalledWith();
-    expect(setClientSettings).toHaveBeenCalledWith({
-      confirmThreadArchive: true,
-      confirmThreadDelete: false,
-      diffWordWrap: true,
-      activeTurnFollowUpMode: "steer",
-      sidebarProjectSortOrder: "manual",
-      sidebarThreadSortOrder: "created_at",
-      timestampFormat: "24-hour",
-    });
+    expect(setClientSettings).toHaveBeenCalledWith(clientSettings);
     expect(getSavedEnvironmentRegistry).toHaveBeenCalledWith();
     expect(setSavedEnvironmentRegistry).toHaveBeenCalledWith([]);
     expect(getSavedEnvironmentSecret).toHaveBeenCalledWith("environment-local");
@@ -596,16 +588,21 @@ describe("wsApi", () => {
   it("falls back to browser storage for persistence when the desktop bridge is missing", async () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi(rpcClientMock as never);
-
-    await api.persistence.setClientSettings({
+    const clientSettings: ClientSettings = {
       confirmThreadArchive: true,
       confirmThreadDelete: false,
       diffWordWrap: true,
       activeTurnFollowUpMode: "steer",
-      sidebarProjectSortOrder: "manual",
-      sidebarThreadSortOrder: "created_at",
-      timestampFormat: "24-hour",
-    });
+      sidebarProjectGroupingMode: "repository_path" as const,
+      sidebarProjectGroupingOverrides: {
+        "environment-local:/tmp/project": "separate" as const,
+      },
+      sidebarProjectSortOrder: "manual" as const,
+      sidebarThreadSortOrder: "created_at" as const,
+      timestampFormat: "24-hour" as const,
+    };
+
+    await api.persistence.setClientSettings(clientSettings);
     await api.persistence.setSavedEnvironmentRegistry([
       {
         environmentId: EnvironmentId.make("environment-local"),
@@ -621,15 +618,7 @@ describe("wsApi", () => {
       "bearer-token",
     );
 
-    await expect(api.persistence.getClientSettings()).resolves.toEqual({
-      confirmThreadArchive: true,
-      confirmThreadDelete: false,
-      diffWordWrap: true,
-      activeTurnFollowUpMode: "steer",
-      sidebarProjectSortOrder: "manual",
-      sidebarThreadSortOrder: "created_at",
-      timestampFormat: "24-hour",
-    });
+    await expect(api.persistence.getClientSettings()).resolves.toEqual(clientSettings);
     await expect(api.persistence.getSavedEnvironmentRegistry()).resolves.toEqual([
       {
         environmentId: EnvironmentId.make("environment-local"),
