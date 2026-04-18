@@ -7,12 +7,12 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("029_RepairProjectionPendingApprovals", (it) => {
+layer("030_RepairProjectionPendingApprovals", (it) => {
   it.effect("removes user-input rows from pending approvals and refreshes thread counts", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 28 });
+      yield* runMigrations({ toMigrationInclusive: 29 });
 
       yield* sql`
         INSERT INTO projection_threads (

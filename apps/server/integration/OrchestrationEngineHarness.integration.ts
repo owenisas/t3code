@@ -58,12 +58,14 @@ import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
 } from "../src/orchestration/Services/OrchestrationEngine.ts";
+import { ThreadDeletionReactor } from "../src/orchestration/Services/ThreadDeletionReactor.ts";
 import { OrchestrationReactor } from "../src/orchestration/Services/OrchestrationReactor.ts";
 import { ProjectionSnapshotQuery } from "../src/orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   RuntimeReceiptBus,
   type OrchestrationRuntimeReceipt,
 } from "../src/orchestration/Services/RuntimeReceiptBus.ts";
+import { TerminalManager } from "../src/terminal/Services/Manager.ts";
 
 import {
   makeTestProviderAdapterHarness,
@@ -351,6 +353,23 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(runtimeIngestionLayer),
       Layer.provideMerge(providerCommandReactorLayer),
       Layer.provideMerge(checkpointReactorLayer),
+      Layer.provideMerge(
+        Layer.succeed(ThreadDeletionReactor, {
+          start: () => Effect.void,
+          drain: Effect.void,
+        }),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(TerminalManager, {
+          open: () => Effect.die("terminal open should not be called in this test"),
+          write: () => Effect.die("terminal write should not be called in this test"),
+          resize: () => Effect.void,
+          clear: () => Effect.void,
+          restart: () => Effect.die("terminal restart should not be called in this test"),
+          close: () => Effect.void,
+          subscribe: () => Effect.succeed(() => undefined),
+        }),
+      ),
     );
     const layer = Layer.empty.pipe(
       Layer.provideMerge(runtimeServicesLayer),

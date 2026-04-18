@@ -37,11 +37,12 @@ import Migration0021 from "./Migrations/021_AuthSessionClientMetadata.ts";
 import Migration0022 from "./Migrations/022_AuthSessionLastConnectedAt.ts";
 import Migration0023 from "./Migrations/023_ProjectionThreadShellSummary.ts";
 import Migration0024 from "./Migrations/024_BackfillProjectionThreadShellSummary.ts";
-import Migration0025 from "./Migrations/025_ProjectionThreadQueuedFollowUps.ts";
-import Migration0026 from "./Migrations/026_ProjectionScheduledJobs.ts";
-import Migration0027 from "./Migrations/027_ProjectionThreadForkOrigin.ts";
-import Migration0028 from "./Migrations/028_RepairProjectionThreadShellSummary.ts";
-import Migration0029 from "./Migrations/029_RepairProjectionPendingApprovals.ts";
+import Migration0025 from "./Migrations/025_CleanupInvalidProjectionPendingApprovals.ts";
+import Migration0026 from "./Migrations/025_ProjectionThreadQueuedFollowUps.ts";
+import Migration0027 from "./Migrations/026_ProjectionScheduledJobs.ts";
+import Migration0028 from "./Migrations/027_ProjectionThreadForkOrigin.ts";
+import Migration0029 from "./Migrations/028_RepairProjectionThreadShellSummary.ts";
+import Migration0030 from "./Migrations/029_RepairProjectionPendingApprovals.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -78,11 +79,12 @@ export const migrationEntries = [
   [22, "AuthSessionLastConnectedAt", Migration0022],
   [23, "ProjectionThreadShellSummary", Migration0023],
   [24, "BackfillProjectionThreadShellSummary", Migration0024],
-  [25, "ProjectionThreadQueuedFollowUps", Migration0025],
-  [26, "ProjectionScheduledJobs", Migration0026],
-  [27, "ProjectionThreadForkOrigin", Migration0027],
-  [28, "RepairProjectionThreadShellSummary", Migration0028],
-  [29, "RepairProjectionPendingApprovals", Migration0029],
+  [25, "CleanupInvalidProjectionPendingApprovals", Migration0025],
+  [26, "ProjectionThreadQueuedFollowUps", Migration0026],
+  [27, "ProjectionScheduledJobs", Migration0027],
+  [28, "ProjectionThreadForkOrigin", Migration0028],
+  [29, "RepairProjectionThreadShellSummary", Migration0029],
+  [30, "RepairProjectionPendingApprovals", Migration0030],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>
