@@ -1,7 +1,10 @@
 import { ProjectId, ScheduledJobId, type ScheduledJob } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { resolveManifestScheduledJobTarget } from "./ScheduledJobReactor.ts";
+import {
+  manifestTargetCommandFingerprint,
+  resolveManifestScheduledJobTarget,
+} from "./ScheduledJobReactor.ts";
 import { scheduledJobIdForManifest } from "../jobManifests.ts";
 
 const projectId = ProjectId.make("project-1");
@@ -91,5 +94,22 @@ describe("resolveManifestScheduledJobTarget", () => {
         manifestTitle: "Social loop",
       }),
     ).toBeNull();
+  });
+});
+
+describe("manifestTargetCommandFingerprint", () => {
+  it("changes when the target job changes so manifest reassertions are not idempotently ignored", () => {
+    const first = manifestTargetCommandFingerprint({
+      manifestFingerprint: "manifest-fingerprint",
+      targetJobId: "job-1",
+      targetUpdatedAt: "2026-04-18T00:00:00.000Z",
+    });
+    const second = manifestTargetCommandFingerprint({
+      manifestFingerprint: "manifest-fingerprint",
+      targetJobId: "job-1",
+      targetUpdatedAt: "2026-04-18T01:00:00.000Z",
+    });
+
+    expect(first).not.toBe(second);
   });
 });

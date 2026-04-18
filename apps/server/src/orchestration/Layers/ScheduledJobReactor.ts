@@ -63,6 +63,12 @@ const manifestCommandId = (tag: string, projectId: string, localId: string, fing
 const fingerprintJson = (value: unknown): string =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
 
+export const manifestTargetCommandFingerprint = (input: {
+  readonly manifestFingerprint: string;
+  readonly targetJobId: string;
+  readonly targetUpdatedAt: string;
+}) => fingerprintJson(input);
+
 const isManifestCommandId = (commandId: CommandId | null): boolean =>
   commandId !== null && String(commandId).startsWith(MANIFEST_COMMAND_PREFIX);
 
@@ -397,10 +403,20 @@ const makeScheduledJobReactor = Effect.gen(function* () {
           existingJob.schedule.intervalMinutes !== manifestJob.intervalMinutes;
 
         if (needsUpdate) {
+          const updateFingerprint = manifestTargetCommandFingerprint({
+            manifestFingerprint: fingerprint,
+            targetJobId: existingJob.id,
+            targetUpdatedAt: existingJob.updatedAt,
+          });
           yield* orchestrationEngine
             .dispatch({
               type: "scheduled-job.update",
-              commandId: manifestCommandId("update", project.id, manifestJob.localId, fingerprint),
+              commandId: manifestCommandId(
+                "update",
+                project.id,
+                manifestJob.localId,
+                updateFingerprint,
+              ),
               jobId: existingJob.id,
               title: manifestJob.title,
               prompt: manifestJob.prompt,
@@ -422,6 +438,11 @@ const makeScheduledJobReactor = Effect.gen(function* () {
         }
 
         if (existingJob.status !== manifestJob.status) {
+          const statusFingerprint = manifestTargetCommandFingerprint({
+            manifestFingerprint: fingerprint,
+            targetJobId: existingJob.id,
+            targetUpdatedAt: existingJob.updatedAt,
+          });
           yield* orchestrationEngine
             .dispatch({
               type:
@@ -430,7 +451,7 @@ const makeScheduledJobReactor = Effect.gen(function* () {
                 manifestJob.status === "paused" ? "pause" : "resume",
                 project.id,
                 manifestJob.localId,
-                fingerprint,
+                statusFingerprint,
               ),
               jobId: existingJob.id,
               createdAt: nowIso,
