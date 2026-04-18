@@ -3,11 +3,13 @@ import {
   MessageId,
   ProjectId,
   type OrchestrationEvent,
+  type ScheduledJob,
+  ScheduledJobId,
   ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { isThreadDetailEvent } from "./ws.ts";
+import { applyScheduledJobShellEventOverlay, isThreadDetailEvent } from "./ws.ts";
 
 function eventBase(type: OrchestrationEvent["type"]): Omit<OrchestrationEvent, "type" | "payload"> {
   return {
@@ -20,6 +22,37 @@ function eventBase(type: OrchestrationEvent["type"]): Omit<OrchestrationEvent, "
     causationEventId: null,
     correlationId: null,
     metadata: {},
+  };
+}
+
+function makeScheduledJob(overrides: Partial<ScheduledJob> = {}): ScheduledJob {
+  return {
+    id: ScheduledJobId.make("job-1"),
+    projectId: ProjectId.make("project-1"),
+    title: "Old job",
+    prompt: "Old prompt",
+    modelSelection: {
+      provider: "claudeAgent",
+      model: "claude-sonnet-4-6",
+    },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    status: "active",
+    schedule: {
+      type: "interval",
+      intervalMinutes: 360,
+    },
+    lastRunAt: null,
+    nextRunAt: "2026-04-18T06:00:00.000Z",
+    lastOutcome: null,
+    lastThreadId: null,
+    lastError: null,
+    activeRun: null,
+    runs: [],
+    createdAt: "2026-04-18T00:00:00.000Z",
+    updatedAt: "2026-04-18T00:00:00.000Z",
+    deletedAt: null,
+    ...overrides,
   };
 }
 
@@ -66,5 +99,41 @@ describe("isThreadDetailEvent", () => {
     };
 
     expect(isThreadDetailEvent(event)).toBe(false);
+  });
+});
+
+describe("applyScheduledJobShellEventOverlay", () => {
+  it("overlays scheduled-job.updated payload fields onto a stale projection row", () => {
+    const staleJob = makeScheduledJob();
+    const event: OrchestrationEvent = {
+      ...eventBase("scheduled-job.updated"),
+      aggregateKind: "scheduled-job",
+      aggregateId: staleJob.id,
+      type: "scheduled-job.updated",
+      payload: {
+        jobId: staleJob.id,
+        prompt: "New prompt with ERROR RESILIENCE",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
+        schedule: {
+          type: "interval",
+          intervalMinutes: 240,
+        },
+        nextRunAt: "2026-04-18T08:00:00.000Z",
+        updatedAt: "2026-04-18T04:00:00.000Z",
+      },
+    };
+
+    const overlaid = applyScheduledJobShellEventOverlay(staleJob, event);
+
+    expect(overlaid.prompt).toBe("New prompt with ERROR RESILIENCE");
+    expect(overlaid.modelSelection).toEqual({
+      provider: "codex",
+      model: "gpt-5.4",
+    });
+    expect(overlaid.schedule.intervalMinutes).toBe(240);
+    expect(overlaid.updatedAt).toBe("2026-04-18T04:00:00.000Z");
   });
 });

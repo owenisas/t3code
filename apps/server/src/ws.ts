@@ -18,6 +18,7 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  type ScheduledJob,
   ThreadId,
   type TerminalEvent,
   WS_METHODS,
@@ -86,6 +87,96 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
     event.type === "thread.reverted" ||
     event.type === "thread.session-set"
   );
+}
+
+type ScheduledJobShellUpsertEvent = Extract<
+  OrchestrationEvent,
+  {
+    type:
+      | "scheduled-job.created"
+      | "scheduled-job.updated"
+      | "scheduled-job.paused"
+      | "scheduled-job.resumed"
+      | "scheduled-job.run-started"
+      | "scheduled-job.run-completed";
+  }
+>;
+
+export function applyScheduledJobShellEventOverlay(
+  job: ScheduledJob,
+  event: ScheduledJobShellUpsertEvent,
+): ScheduledJob {
+  switch (event.type) {
+    case "scheduled-job.created":
+      return event.payload.job;
+    case "scheduled-job.updated":
+      return {
+        ...job,
+        ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+        ...(event.payload.prompt !== undefined ? { prompt: event.payload.prompt } : {}),
+        ...(event.payload.modelSelection !== undefined
+          ? { modelSelection: event.payload.modelSelection }
+          : {}),
+        ...(event.payload.runtimeMode !== undefined
+          ? { runtimeMode: event.payload.runtimeMode }
+          : {}),
+        ...(event.payload.interactionMode !== undefined
+          ? { interactionMode: event.payload.interactionMode }
+          : {}),
+        ...(event.payload.schedule !== undefined ? { schedule: event.payload.schedule } : {}),
+        nextRunAt: event.payload.nextRunAt,
+        updatedAt: event.payload.updatedAt,
+      };
+    case "scheduled-job.paused":
+      return {
+        ...job,
+        status: "paused",
+        nextRunAt: null,
+        updatedAt: event.payload.updatedAt,
+      };
+    case "scheduled-job.resumed":
+      return {
+        ...job,
+        status: "active",
+        nextRunAt: event.payload.nextRunAt,
+        updatedAt: event.payload.updatedAt,
+      };
+    case "scheduled-job.run-started":
+      return {
+        ...job,
+        activeRun: event.payload.run,
+        runs: [
+          event.payload.run,
+          ...job.runs.filter((run) => run.id !== event.payload.run.id),
+        ].slice(0, 20),
+        lastThreadId: event.payload.run.threadId,
+        lastError: null,
+        nextRunAt: event.payload.nextRunAt,
+        updatedAt: event.payload.updatedAt,
+      };
+    case "scheduled-job.run-completed": {
+      const activeRun = job.activeRun?.id === event.payload.runId ? job.activeRun : null;
+      return {
+        ...job,
+        activeRun: null,
+        runs: job.runs.map((run) =>
+          run.id === event.payload.runId
+            ? {
+                ...run,
+                completedAt: event.payload.completedAt,
+                outcome: event.payload.outcome,
+                error: event.payload.error,
+              }
+            : run,
+        ),
+        lastRunAt: activeRun?.startedAt ?? job.lastRunAt,
+        lastOutcome: event.payload.outcome,
+        lastThreadId: activeRun?.threadId ?? job.lastThreadId,
+        lastError: event.payload.error,
+        updatedAt: event.payload.updatedAt,
+      };
+    }
+  }
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
@@ -287,7 +378,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 Option.map(job, (nextJob) => ({
                   kind: "scheduled-job-upserted" as const,
                   sequence: event.sequence,
-                  job: nextJob,
+                  job: applyScheduledJobShellEventOverlay(nextJob, event),
                 })),
               ),
               Effect.catch(() => Effect.succeed(Option.none())),

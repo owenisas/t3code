@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CommandId,
   PROVIDER_DISPLAY_NAMES,
@@ -1826,6 +1826,10 @@ export function ScheduledJobsPanel() {
   });
   const [editingJobId, setEditingJobId] = useState<ScheduledJobId | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const editingJob = useMemo(
+    () => jobs.find((job) => job.id === editingJobId) ?? null,
+    [editingJobId, jobs],
+  );
   const modelsByProvider = useMemo(() => providerModelOptionsByProvider(providers), [providers]);
   const projectsById = useMemo(
     () => Object.fromEntries(projects.map((project) => [project.id, project] as const)),
@@ -1865,6 +1869,17 @@ export function ScheduledJobsPanel() {
       model: nextScheduledJobModel("codex", modelsByProvider, ""),
     });
   }, [modelsByProvider, projects]);
+
+  useEffect(() => {
+    if (!editingJobId) {
+      return;
+    }
+    if (!editingJob) {
+      resetForm();
+      return;
+    }
+    setFormState(toScheduledJobFormState(editingJob));
+  }, [editingJob, editingJobId, resetForm]);
 
   const validateForm = useCallback(() => {
     const selectedProject = projectsById[formState.projectId];
