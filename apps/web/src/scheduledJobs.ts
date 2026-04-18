@@ -1,9 +1,12 @@
 import {
+  MessageId,
   type ModelSelection,
   type ProjectId,
   type ProviderInteractionMode,
   ScheduledJobId,
+  ScheduledJobRunId,
   type RuntimeMode,
+  ThreadId,
 } from "@t3tools/contracts";
 
 import { randomUUID } from "./lib/utils";
@@ -119,5 +122,58 @@ export function buildScheduledJobCreateCommand(input: {
       intervalMinutes: input.intervalHours * 60,
     },
     createdAt,
+  };
+}
+
+export function buildScheduledJobRunNowCommand(input: {
+  jobId: ScheduledJobId;
+  createdAt?: string;
+}) {
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  return {
+    type: "scheduled-job.run.trigger" as const,
+    commandId: newCommandId(),
+    jobId: input.jobId,
+    runId: ScheduledJobRunId.make(randomUUID()),
+    threadId: ThreadId.make(randomUUID()),
+    messageId: MessageId.make(randomUUID()),
+    trigger: "manual" as const,
+    createdAt,
+  };
+}
+
+export function buildScheduledJobPauseCommand(input: {
+  jobId: ScheduledJobId;
+  createdAt?: string;
+}) {
+  return {
+    type: "scheduled-job.pause" as const,
+    commandId: newCommandId(),
+    jobId: input.jobId,
+    createdAt: input.createdAt ?? new Date().toISOString(),
+  };
+}
+
+export function buildScheduledJobResumeCommand(input: {
+  jobId: ScheduledJobId;
+  createdAt?: string;
+}) {
+  return {
+    type: "scheduled-job.resume" as const,
+    commandId: newCommandId(),
+    jobId: input.jobId,
+    createdAt: input.createdAt ?? new Date().toISOString(),
+  };
+}
+
+export function buildScheduledJobDeleteCommand(input: {
+  jobId: ScheduledJobId;
+  createdAt?: string;
+}) {
+  return {
+    type: "scheduled-job.delete" as const,
+    commandId: newCommandId(),
+    jobId: input.jobId,
+    createdAt: input.createdAt ?? new Date().toISOString(),
   };
 }

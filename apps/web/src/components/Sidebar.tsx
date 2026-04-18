@@ -35,6 +35,10 @@ import {
   type ContextMenuItem,
   type DesktopUpdateState,
   ProjectId,
+  type ScheduledJobId,
+  type ScheduledJobRunOutcome,
+  type ScheduledJobRunTrigger,
+  type ScheduledJobStatus,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
   type ThreadEnvMode,
@@ -61,6 +65,7 @@ import { isMacPlatform, newCommandId } from "../lib/utils";
 import {
   selectProjectByRef,
   selectProjectsAcrossEnvironments,
+  selectScheduledJobsAcrossEnvironments,
   selectSidebarThreadsForProjectRefs,
   selectSidebarThreadsAcrossEnvironments,
   selectThreadByRef,
@@ -164,10 +169,16 @@ import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "../rpc/serverState";
 import { derivePhysicalProjectKey, deriveProjectGroupingOverrideKey } from "../logicalProject";
 import {
+  buildScheduledJobDeleteCommand,
+  buildScheduledJobPauseCommand,
+  buildScheduledJobResumeCommand,
+  buildScheduledJobRunNowCommand,
+} from "../scheduledJobs";
+import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
-import type { SidebarThreadSummary } from "../types";
+import type { ScheduledJobRecord, SidebarThreadSummary } from "../types";
 import {
   buildPhysicalToLogicalProjectKeyMap,
   buildSidebarProjectSnapshots,
@@ -175,6 +186,7 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 const THREAD_PREVIEW_LIMIT = 6;
+const JOB_THREAD_PREVIEW_LIMIT = 3;
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -194,6 +206,89 @@ const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> =
   repository_path: "Group by repository path",
   separate: "Keep separate",
 };
+
+interface SidebarJobRunThreadInfo {
+  readonly jobId: ScheduledJobId;
+  readonly jobTitle: string;
+  readonly status: ScheduledJobStatus;
+  readonly trigger: ScheduledJobRunTrigger | null;
+  readonly outcome: ScheduledJobRunOutcome | null;
+  readonly startedAt: string | null;
+  readonly hasActiveRun: boolean;
+}
+
+function scheduledJobRunTriggerLabel(trigger: ScheduledJobRunTrigger | null): string {
+  switch (trigger) {
+    case "manual":
+      return "manual run";
+    case "schedule":
+      return "scheduled run";
+    case null:
+      return "job run";
+  }
+}
+
+function scheduledJobRunOutcomeLabel(outcome: ScheduledJobRunOutcome | null): string {
+  switch (outcome) {
+    case "succeeded":
+      return "succeeded";
+    case "failed":
+      return "failed";
+    case "interrupted":
+      return "interrupted";
+    case null:
+      return "running";
+  }
+}
+
+function buildScheduledJobThreadInfoByKey(
+  jobs: readonly ScheduledJobRecord[],
+): ReadonlyMap<string, SidebarJobRunThreadInfo> {
+  const byThreadKey = new Map<string, SidebarJobRunThreadInfo>();
+
+  for (const job of jobs) {
+    for (const run of job.runs) {
+      byThreadKey.set(scopedThreadKey(scopeThreadRef(job.environmentId, run.threadId)), {
+        jobId: job.id,
+        jobTitle: job.title,
+        status: job.status,
+        trigger: run.trigger,
+        outcome: run.outcome,
+        startedAt: run.startedAt,
+        hasActiveRun: job.activeRun !== null,
+      });
+    }
+
+    if (job.activeRun) {
+      byThreadKey.set(scopedThreadKey(scopeThreadRef(job.environmentId, job.activeRun.threadId)), {
+        jobId: job.id,
+        jobTitle: job.title,
+        status: job.status,
+        trigger: job.activeRun.trigger,
+        outcome: job.activeRun.outcome,
+        startedAt: job.activeRun.startedAt,
+        hasActiveRun: true,
+      });
+    }
+
+    if (job.lastThreadId) {
+      const threadKey = scopedThreadKey(scopeThreadRef(job.environmentId, job.lastThreadId));
+      if (!byThreadKey.has(threadKey)) {
+        byThreadKey.set(threadKey, {
+          jobId: job.id,
+          jobTitle: job.title,
+          status: job.status,
+          trigger: null,
+          outcome: job.lastOutcome,
+          startedAt: job.lastRunAt,
+          hasActiveRun: job.activeRun !== null,
+        });
+      }
+    }
+  }
+
+  return byThreadKey;
+}
 
 function threadJumpLabelMapsEqual(
   left: ReadonlyMap<string, string>,
@@ -374,6 +469,7 @@ function resolveThreadPr(
 
 interface SidebarThreadRowProps {
   thread: SidebarThreadSummary;
+  jobRunInfo: SidebarJobRunThreadInfo | null;
   projectCwd: string | null;
   orderedProjectThreadKeys: readonly string[];
   isActive: boolean;
@@ -433,6 +529,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     attemptArchiveThread,
     openPrLink,
     thread,
+    jobRunInfo,
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
@@ -680,6 +777,24 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </Tooltip>
           )}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
+          {jobRunInfo && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    aria-label={`Job run: ${jobRunInfo.jobTitle}`}
+                    className="inline-flex items-center justify-center text-amber-400/80"
+                  />
+                }
+              >
+                <CalendarClockIcon className="size-3" />
+              </TooltipTrigger>
+              <TooltipPopup side="top" className="max-w-72 whitespace-normal leading-tight">
+                {jobRunInfo.jobTitle} · {scheduledJobRunTriggerLabel(jobRunInfo.trigger)} ·{" "}
+                {scheduledJobRunOutcomeLabel(jobRunInfo.outcome)}
+              </TooltipPopup>
+            </Tooltip>
+          )}
           {renamingThreadKey === threadKey ? (
             <input
               ref={handleRenameInputRef}
@@ -824,6 +939,10 @@ interface SidebarProjectThreadListProps {
   hiddenThreadStatus: ThreadStatusPill | null;
   orderedProjectThreadKeys: readonly string[];
   renderedThreads: readonly SidebarThreadSummary[];
+  renderedJobRunThreads: readonly SidebarThreadSummary[];
+  jobRunThreadCount: number;
+  jobRunThreadInfoByKey: ReadonlyMap<string, SidebarJobRunThreadInfo>;
+  isJobRunListExpanded: boolean;
   showEmptyThreadState: boolean;
   shouldShowThreadPanel: boolean;
   isThreadListExpanded: boolean;
@@ -860,6 +979,7 @@ interface SidebarProjectThreadListProps {
   cancelRename: () => void;
   attemptArchiveThread: (threadRef: ScopedThreadRef) => Promise<void>;
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
+  toggleJobRunListForProject: (projectKey: string) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
 }
@@ -874,6 +994,10 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     hiddenThreadStatus,
     orderedProjectThreadKeys,
     renderedThreads,
+    renderedJobRunThreads,
+    jobRunThreadCount,
+    jobRunThreadInfoByKey,
+    isJobRunListExpanded,
     showEmptyThreadState,
     shouldShowThreadPanel,
     isThreadListExpanded,
@@ -899,11 +1023,48 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     cancelRename,
     attemptArchiveThread,
     openPrLink,
+    toggleJobRunListForProject,
     expandThreadListForProject,
     collapseThreadListForProject,
   } = props;
   const showMoreButtonRender = useMemo(() => <button type="button" />, []);
   const showLessButtonRender = useMemo(() => <button type="button" />, []);
+  const jobRunFolderButtonRender = useMemo(() => <button type="button" />, []);
+  const renderThreadRow = (
+    thread: SidebarThreadSummary,
+    jobRunInfo: SidebarJobRunThreadInfo | null,
+  ) => {
+    const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    return (
+      <SidebarThreadRow
+        key={threadKey}
+        thread={thread}
+        jobRunInfo={jobRunInfo}
+        projectCwd={projectCwd}
+        orderedProjectThreadKeys={orderedProjectThreadKeys}
+        isActive={activeRouteThreadKey === threadKey}
+        jumpLabel={threadJumpLabelByKey.get(threadKey) ?? null}
+        appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
+        renamingThreadKey={renamingThreadKey}
+        renamingTitle={renamingTitle}
+        setRenamingTitle={setRenamingTitle}
+        renamingInputRef={renamingInputRef}
+        renamingCommittedRef={renamingCommittedRef}
+        confirmingArchiveThreadKey={confirmingArchiveThreadKey}
+        setConfirmingArchiveThreadKey={setConfirmingArchiveThreadKey}
+        confirmArchiveButtonRefs={confirmArchiveButtonRefs}
+        handleThreadClick={handleThreadClick}
+        navigateToThread={navigateToThread}
+        handleMultiSelectContextMenu={handleMultiSelectContextMenu}
+        handleThreadContextMenu={handleThreadContextMenu}
+        clearSelection={clearSelection}
+        commitRename={commitRename}
+        cancelRename={cancelRename}
+        attemptArchiveThread={attemptArchiveThread}
+        openPrLink={openPrLink}
+      />
+    );
+  };
 
   return (
     <SidebarMenuSub
@@ -920,38 +1081,38 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
           </div>
         </SidebarMenuSubItem>
       ) : null}
-      {shouldShowThreadPanel &&
-        renderedThreads.map((thread) => {
-          const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-          return (
-            <SidebarThreadRow
-              key={threadKey}
-              thread={thread}
-              projectCwd={projectCwd}
-              orderedProjectThreadKeys={orderedProjectThreadKeys}
-              isActive={activeRouteThreadKey === threadKey}
-              jumpLabel={threadJumpLabelByKey.get(threadKey) ?? null}
-              appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
-              renamingThreadKey={renamingThreadKey}
-              renamingTitle={renamingTitle}
-              setRenamingTitle={setRenamingTitle}
-              renamingInputRef={renamingInputRef}
-              renamingCommittedRef={renamingCommittedRef}
-              confirmingArchiveThreadKey={confirmingArchiveThreadKey}
-              setConfirmingArchiveThreadKey={setConfirmingArchiveThreadKey}
-              confirmArchiveButtonRefs={confirmArchiveButtonRefs}
-              handleThreadClick={handleThreadClick}
-              navigateToThread={navigateToThread}
-              handleMultiSelectContextMenu={handleMultiSelectContextMenu}
-              handleThreadContextMenu={handleThreadContextMenu}
-              clearSelection={clearSelection}
-              commitRename={commitRename}
-              cancelRename={cancelRename}
-              attemptArchiveThread={attemptArchiveThread}
-              openPrLink={openPrLink}
-            />
-          );
-        })}
+      {shouldShowThreadPanel && renderedThreads.map((thread) => renderThreadRow(thread, null))}
+
+      {shouldShowThreadPanel && renderedJobRunThreads.length > 0 ? (
+        <>
+          <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+            <SidebarMenuSubButton
+              render={jobRunFolderButtonRender}
+              data-thread-selection-safe
+              size="sm"
+              aria-expanded={isJobRunListExpanded}
+              aria-label={`${isJobRunListExpanded ? "Collapse" : "Expand"} job runs`}
+              className="mt-1 h-6 w-full translate-x-0 justify-start gap-1.5 px-2 text-left text-[10px] font-medium uppercase tracking-wide text-amber-300/70 hover:bg-accent hover:text-amber-200"
+              onClick={() => toggleJobRunListForProject(projectKey)}
+            >
+              <ChevronRightIcon
+                className={`size-3 transition-transform duration-150 ${
+                  isJobRunListExpanded ? "rotate-90" : ""
+                }`}
+              />
+              <CalendarClockIcon className="size-3" />
+              <span className="flex-1">Job runs</span>
+              <span className="text-[10px] text-muted-foreground/50">{jobRunThreadCount}</span>
+            </SidebarMenuSubButton>
+          </SidebarMenuSubItem>
+          {isJobRunListExpanded
+            ? renderedJobRunThreads.map((thread) => {
+                const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+                return renderThreadRow(thread, jobRunThreadInfoByKey.get(threadKey) ?? null);
+              })
+            : null}
+        </>
+      ) : null}
 
       {projectExpanded && hasOverflowingThreads && !isThreadListExpanded && (
         <SidebarMenuSubItem className="w-full">
@@ -1048,6 +1209,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const router = useRouter();
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
   const toggleProject = useUiStateStore((state) => state.toggleProject);
+  const isJobRunListExpanded = useUiStateStore(
+    (state) => state.jobRunListExpandedByProjectId[project.projectKey] ?? true,
+  );
+  const toggleJobRunListForProject = useUiStateStore((state) => state.toggleJobRunListForProject);
   const toggleThreadSelection = useThreadSelectionStore((state) => state.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((state) => state.rangeSelectTo);
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
@@ -1127,6 +1292,25 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       ),
     ),
   );
+  const projectScheduledJobs = useStore(
+    useShallow(
+      useMemo(() => {
+        const projectMemberKeys = new Set(
+          project.memberProjectRefs.map((ref) => scopedProjectKey(ref)),
+        );
+        return (state: import("../store").AppState) =>
+          selectScheduledJobsAcrossEnvironments(state).filter((job) =>
+            projectMemberKeys.has(
+              scopedProjectKey(scopeProjectRef(job.environmentId, job.projectId)),
+            ),
+          );
+      }, [project.memberProjectRefs]),
+    ),
+  );
+  const scheduledJobThreadInfoByKey = useMemo(
+    () => buildScheduledJobThreadInfoByKey(projectScheduledJobs),
+    [projectScheduledJobs],
+  );
   const sidebarThreadByKey = useMemo(
     () =>
       new Map(
@@ -1143,6 +1327,25 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const sidebarThreadByKeyRef = useRef(sidebarThreadByKey);
   sidebarThreadByKeyRef.current = sidebarThreadByKey;
   const projectThreads = sidebarThreads;
+  const regularProjectThreads = useMemo(
+    () =>
+      projectThreads.filter(
+        (thread) =>
+          !scheduledJobThreadInfoByKey.has(
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          ),
+      ),
+    [projectThreads, scheduledJobThreadInfoByKey],
+  );
+  const jobRunProjectThreads = useMemo(
+    () =>
+      projectThreads.filter((thread) =>
+        scheduledJobThreadInfoByKey.has(
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        ),
+      ),
+    [projectThreads, scheduledJobThreadInfoByKey],
+  );
   const projectExpanded = useUiStateStore(
     (state) => state.projectExpandedById[project.projectKey] ?? true,
   );
@@ -1197,39 +1400,52 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     return counts;
   }, [memberProjectByScopedKey, project.memberProjects, projectThreads]);
 
-  const { projectStatus, visibleProjectThreads, orderedProjectThreadKeys } = useMemo(() => {
-    const lastVisitedAtByThreadKey = new Map(
-      projectThreads.map((thread, index) => [
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-        threadLastVisitedAts[index] ?? null,
-      ]),
-    );
-    const resolveProjectThreadStatus = (thread: SidebarThreadSummary) => {
-      const lastVisitedAt = lastVisitedAtByThreadKey.get(
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+  const { projectStatus, visibleProjectThreads, visibleJobRunThreads, orderedProjectThreadKeys } =
+    useMemo(() => {
+      const lastVisitedAtByThreadKey = new Map(
+        projectThreads.map((thread, index) => [
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          threadLastVisitedAts[index] ?? null,
+        ]),
       );
-      return resolveThreadStatusPill({
-        thread: {
-          ...thread,
-          ...(lastVisitedAt !== null && lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
-        },
-      });
-    };
-    const visibleProjectThreads = sortThreads(
-      projectThreads.filter((thread) => thread.archivedAt === null),
+      const resolveProjectThreadStatus = (thread: SidebarThreadSummary) => {
+        const lastVisitedAt = lastVisitedAtByThreadKey.get(
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        );
+        return resolveThreadStatusPill({
+          thread: {
+            ...thread,
+            ...(lastVisitedAt !== null && lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
+          },
+        });
+      };
+      const visibleProjectThreads = sortThreads(
+        regularProjectThreads.filter((thread) => thread.archivedAt === null),
+        threadSortOrder,
+      );
+      const visibleJobRunThreads = sortThreads(
+        jobRunProjectThreads.filter((thread) => thread.archivedAt === null),
+        threadSortOrder,
+      );
+      const visibleThreads = [...visibleProjectThreads, ...visibleJobRunThreads];
+      const projectStatus = resolveProjectStatusIndicator(
+        visibleThreads.map((thread) => resolveProjectThreadStatus(thread)),
+      );
+      return {
+        orderedProjectThreadKeys: visibleThreads.map((thread) =>
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        ),
+        projectStatus,
+        visibleProjectThreads,
+        visibleJobRunThreads,
+      };
+    }, [
+      jobRunProjectThreads,
+      projectThreads,
+      regularProjectThreads,
+      threadLastVisitedAts,
       threadSortOrder,
-    );
-    const projectStatus = resolveProjectStatusIndicator(
-      visibleProjectThreads.map((thread) => resolveProjectThreadStatus(thread)),
-    );
-    return {
-      orderedProjectThreadKeys: visibleProjectThreads.map((thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      ),
-      projectStatus,
-      visibleProjectThreads,
-    };
-  }, [projectThreads, threadLastVisitedAts, threadSortOrder]);
+    ]);
 
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;
@@ -1237,20 +1453,29 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       return null;
     }
     return (
-      visibleProjectThreads.find(
+      [...visibleProjectThreads, ...visibleJobRunThreads].find(
         (thread) =>
           scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === activeThreadKey,
       ) ?? null
     );
-  }, [activeRouteThreadKey, projectExpanded, visibleProjectThreads]);
+  }, [activeRouteThreadKey, projectExpanded, visibleJobRunThreads, visibleProjectThreads]);
 
   const {
     hasOverflowingThreads,
     hiddenThreadStatus,
     renderedThreads,
+    renderedJobRunThreads,
     showEmptyThreadState,
     shouldShowThreadPanel,
   } = useMemo(() => {
+    const pinnedCollapsedThreadKey = pinnedCollapsedThread
+      ? scopedThreadKey(
+          scopeThreadRef(pinnedCollapsedThread.environmentId, pinnedCollapsedThread.id),
+        )
+      : null;
+    const pinnedCollapsedThreadIsJob =
+      pinnedCollapsedThreadKey !== null &&
+      scheduledJobThreadInfoByKey.has(pinnedCollapsedThreadKey);
     const lastVisitedAtByThreadKey = new Map(
       projectThreads.map((thread, index) => [
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
@@ -1268,24 +1493,53 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         },
       });
     };
-    const hasOverflowingThreads = visibleProjectThreads.length > THREAD_PREVIEW_LIMIT;
+    const hasOverflowingRegularThreads = visibleProjectThreads.length > THREAD_PREVIEW_LIMIT;
+    const hasOverflowingJobRunThreads = visibleJobRunThreads.length > JOB_THREAD_PREVIEW_LIMIT;
+    const hasOverflowingThreads = hasOverflowingRegularThreads || hasOverflowingJobRunThreads;
     const previewThreads =
-      isThreadListExpanded || !hasOverflowingThreads
+      isThreadListExpanded || !hasOverflowingRegularThreads
         ? visibleProjectThreads
         : visibleProjectThreads.slice(0, THREAD_PREVIEW_LIMIT);
-    const visibleThreadKeys = new Set(
-      [...previewThreads, ...(pinnedCollapsedThread ? [pinnedCollapsedThread] : [])].map((thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      ),
+    const previewJobRunThreads =
+      isThreadListExpanded || !hasOverflowingJobRunThreads
+        ? visibleJobRunThreads
+        : visibleJobRunThreads.slice(0, JOB_THREAD_PREVIEW_LIMIT);
+    const regularVisibleThreadKeys = new Set(
+      [
+        ...previewThreads,
+        ...(pinnedCollapsedThread && !pinnedCollapsedThreadIsJob ? [pinnedCollapsedThread] : []),
+      ].map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
     );
-    const renderedThreads = pinnedCollapsedThread
-      ? [pinnedCollapsedThread]
-      : visibleProjectThreads.filter((thread) =>
-          visibleThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
-        );
-    const hiddenThreads = visibleProjectThreads.filter(
+    const jobRunVisibleThreadKeys = new Set(
+      [
+        ...previewJobRunThreads,
+        ...(pinnedCollapsedThread && pinnedCollapsedThreadIsJob ? [pinnedCollapsedThread] : []),
+      ].map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+    );
+    const renderedThreads =
+      pinnedCollapsedThread && !pinnedCollapsedThreadIsJob
+        ? [pinnedCollapsedThread]
+        : visibleProjectThreads.filter((thread) =>
+            regularVisibleThreadKeys.has(
+              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+            ),
+          );
+    const renderedJobRunThreads =
+      pinnedCollapsedThread && pinnedCollapsedThreadIsJob
+        ? [pinnedCollapsedThread]
+        : visibleJobRunThreads.filter((thread) =>
+            jobRunVisibleThreadKeys.has(
+              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+            ),
+          );
+    const hiddenThreads = [...visibleProjectThreads, ...visibleJobRunThreads].filter(
       (thread) =>
-        !visibleThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+        !regularVisibleThreadKeys.has(
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        ) &&
+        !jobRunVisibleThreadKeys.has(
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        ),
     );
     return {
       hasOverflowingThreads,
@@ -1293,7 +1547,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         hiddenThreads.map((thread) => resolveProjectThreadStatus(thread)),
       ),
       renderedThreads,
-      showEmptyThreadState: projectExpanded && visibleProjectThreads.length === 0,
+      renderedJobRunThreads,
+      showEmptyThreadState:
+        projectExpanded && visibleProjectThreads.length === 0 && visibleJobRunThreads.length === 0,
       shouldShowThreadPanel: projectExpanded || pinnedCollapsedThread !== null,
     };
   }, [
@@ -1301,7 +1557,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     pinnedCollapsedThread,
     projectExpanded,
     projectThreads,
+    scheduledJobThreadInfoByKey,
     threadLastVisitedAts,
+    visibleJobRunThreads,
     visibleProjectThreads,
   ]);
 
@@ -1914,20 +2172,118 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const threadKey = scopedThreadKey(threadRef);
       const thread = sidebarThreadByKeyRef.current.get(threadKey) ?? null;
       if (!thread) return;
+      const jobRunInfo = scheduledJobThreadInfoByKey.get(threadKey) ?? null;
       const threadProject = memberProjectByScopedKey.get(
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
       const threadWorkspacePath = thread.worktreePath ?? threadProject?.cwd ?? project.cwd ?? null;
       const clicked = await api.contextMenu.show(
         [
+          ...(jobRunInfo
+            ? ([
+                { id: "job-open", label: "Open job settings" },
+                {
+                  id: "job-run",
+                  label: "Run job now",
+                  disabled: jobRunInfo.hasActiveRun,
+                },
+                {
+                  id: jobRunInfo.status === "active" ? "job-pause" : "job-resume",
+                  label: jobRunInfo.status === "active" ? "Pause job" : "Resume job",
+                },
+                { id: "job-delete", label: "Delete job", destructive: true },
+              ] satisfies ContextMenuItem<string>[])
+            : []),
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
-          { id: "delete", label: "Delete", destructive: true },
+          {
+            id: "delete",
+            label: jobRunInfo ? "Delete run thread" : "Delete",
+            destructive: true,
+          },
         ],
         position,
       );
+
+      if (clicked === "job-open") {
+        void router.navigate({ to: "/jobs" });
+        return;
+      }
+      if (
+        clicked === "job-run" ||
+        clicked === "job-pause" ||
+        clicked === "job-resume" ||
+        clicked === "job-delete"
+      ) {
+        if (!jobRunInfo) {
+          return;
+        }
+        if (clicked === "job-run" && jobRunInfo.hasActiveRun) {
+          toastManager.add({
+            type: "warning",
+            title: "Job is already running",
+            description: "Wait for the active run to finish before starting another one.",
+          });
+          return;
+        }
+        if (clicked === "job-delete") {
+          const confirmed = await api.dialogs.confirm(
+            [
+              `Delete scheduled job "${jobRunInfo.jobTitle}"?`,
+              "Future scheduled runs will stop.",
+              "Existing run threads remain in history; an active run is not stopped.",
+            ].join("\n"),
+          );
+          if (!confirmed) {
+            return;
+          }
+        }
+        const environmentApi = readEnvironmentApi(thread.environmentId);
+        if (!environmentApi) {
+          toastManager.add({
+            type: "error",
+            title: "Job action unavailable",
+            description: "Project API unavailable.",
+          });
+          return;
+        }
+        try {
+          const createdAt = new Date().toISOString();
+          if (clicked === "job-run") {
+            await environmentApi.orchestration.dispatchCommand(
+              buildScheduledJobRunNowCommand({ jobId: jobRunInfo.jobId, createdAt }),
+            );
+          } else if (clicked === "job-pause") {
+            await environmentApi.orchestration.dispatchCommand(
+              buildScheduledJobPauseCommand({ jobId: jobRunInfo.jobId, createdAt }),
+            );
+          } else if (clicked === "job-resume") {
+            await environmentApi.orchestration.dispatchCommand(
+              buildScheduledJobResumeCommand({ jobId: jobRunInfo.jobId, createdAt }),
+            );
+          } else {
+            await environmentApi.orchestration.dispatchCommand(
+              buildScheduledJobDeleteCommand({ jobId: jobRunInfo.jobId, createdAt }),
+            );
+          }
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title:
+              clicked === "job-run"
+                ? "Failed to run job"
+                : clicked === "job-pause"
+                  ? "Failed to pause job"
+                  : clicked === "job-resume"
+                    ? "Failed to resume job"
+                    : "Failed to delete job",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        }
+        return;
+      }
 
       if (clicked === "rename") {
         setRenamingThreadKey(threadKey);
@@ -1978,6 +2334,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       markThreadUnread,
       memberProjectByScopedKey,
       project.cwd,
+      router,
+      scheduledJobThreadInfoByKey,
     ],
   );
 
@@ -2084,6 +2442,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         hiddenThreadStatus={hiddenThreadStatus}
         orderedProjectThreadKeys={orderedProjectThreadKeys}
         renderedThreads={renderedThreads}
+        renderedJobRunThreads={renderedJobRunThreads}
+        jobRunThreadCount={visibleJobRunThreads.length}
+        jobRunThreadInfoByKey={scheduledJobThreadInfoByKey}
+        isJobRunListExpanded={isJobRunListExpanded}
         showEmptyThreadState={showEmptyThreadState}
         shouldShowThreadPanel={shouldShowThreadPanel}
         isThreadListExpanded={isThreadListExpanded}
@@ -2109,6 +2471,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         cancelRename={cancelRename}
         attemptArchiveThread={attemptArchiveThread}
         openPrLink={openPrLink}
+        toggleJobRunListForProject={toggleJobRunListForProject}
         expandThreadListForProject={expandThreadListForProject}
         collapseThreadListForProject={collapseThreadListForProject}
       />
@@ -2741,7 +3104,11 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 export default function Sidebar() {
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const sidebarThreads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
+  const scheduledJobs = useStore(useShallow(selectScheduledJobsAcrossEnvironments));
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
+  const jobRunListExpandedByProjectId = useUiStateStore(
+    (store) => store.jobRunListExpandedByProjectId,
+  );
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
   const navigate = useNavigate();
@@ -2839,6 +3206,10 @@ export default function Sidebar() {
         ),
       ),
     [sidebarThreads],
+  );
+  const scheduledJobThreadInfoByKey = useMemo(
+    () => buildScheduledJobThreadInfoByKey(scheduledJobs),
+    [scheduledJobs],
   );
   // Resolve the active route's project key to a logical key so it matches the
   // sidebar's grouped project entries.
@@ -2983,8 +3354,15 @@ export default function Sidebar() {
   }, []);
 
   const visibleThreads = useMemo(
-    () => sidebarThreads.filter((thread) => thread.archivedAt === null),
-    [sidebarThreads],
+    () =>
+      sidebarThreads.filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          !scheduledJobThreadInfoByKey.has(
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          ),
+      ),
+    [scheduledJobThreadInfoByKey, sidebarThreads],
   );
   const sortedProjects = useMemo(() => {
     const sortableProjects = sidebarProjects.map((project) => ({
@@ -3021,17 +3399,33 @@ export default function Sidebar() {
   const visibleSidebarThreadKeys = useMemo(
     () =>
       sortedProjects.flatMap((project) => {
-        const projectThreads = sortThreads(
-          (threadsByProjectKey.get(project.projectKey) ?? []).filter(
-            (thread) => thread.archivedAt === null,
+        const projectThreads = (threadsByProjectKey.get(project.projectKey) ?? []).filter(
+          (thread) => thread.archivedAt === null,
+        );
+        const regularProjectThreads = sortThreads(
+          projectThreads.filter(
+            (thread) =>
+              !scheduledJobThreadInfoByKey.has(
+                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+              ),
           ),
           sidebarThreadSortOrder,
         );
+        const jobRunProjectThreads = sortThreads(
+          projectThreads.filter((thread) =>
+            scheduledJobThreadInfoByKey.has(
+              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+            ),
+          ),
+          sidebarThreadSortOrder,
+        );
+        const orderedProjectThreads = [...regularProjectThreads, ...jobRunProjectThreads];
         const projectExpanded = projectExpandedById[project.projectKey] ?? true;
+        const jobRunListExpanded = jobRunListExpandedByProjectId[project.projectKey] ?? true;
         const activeThreadKey = routeThreadKey ?? undefined;
         const pinnedCollapsedThread =
           !projectExpanded && activeThreadKey
-            ? (projectThreads.find(
+            ? (orderedProjectThreads.find(
                 (thread) =>
                   scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
                   activeThreadKey,
@@ -3042,12 +3436,20 @@ export default function Sidebar() {
           return [];
         }
         const isThreadListExpanded = expandedThreadListsByProject.has(project.projectKey);
-        const hasOverflowingThreads = projectThreads.length > THREAD_PREVIEW_LIMIT;
+        const hasOverflowingRegularThreads = regularProjectThreads.length > THREAD_PREVIEW_LIMIT;
+        const hasOverflowingJobRunThreads = jobRunProjectThreads.length > JOB_THREAD_PREVIEW_LIMIT;
         const previewThreads =
-          isThreadListExpanded || !hasOverflowingThreads
-            ? projectThreads
-            : projectThreads.slice(0, THREAD_PREVIEW_LIMIT);
-        const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
+          isThreadListExpanded || !hasOverflowingRegularThreads
+            ? regularProjectThreads
+            : regularProjectThreads.slice(0, THREAD_PREVIEW_LIMIT);
+        const previewJobRunThreads = !jobRunListExpanded
+          ? []
+          : isThreadListExpanded || !hasOverflowingJobRunThreads
+            ? jobRunProjectThreads
+            : jobRunProjectThreads.slice(0, JOB_THREAD_PREVIEW_LIMIT);
+        const renderedThreads = pinnedCollapsedThread
+          ? [pinnedCollapsedThread]
+          : [...previewThreads, ...previewJobRunThreads];
         return renderedThreads.map((thread) =>
           scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
         );
@@ -3055,8 +3457,10 @@ export default function Sidebar() {
     [
       sidebarThreadSortOrder,
       expandedThreadListsByProject,
+      jobRunListExpandedByProjectId,
       projectExpandedById,
       routeThreadKey,
+      scheduledJobThreadInfoByKey,
       sortedProjects,
       threadsByProjectKey,
     ],

@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { ProjectId } from "@t3tools/contracts";
+import { ProjectId, ScheduledJobId } from "@t3tools/contracts";
 
 import {
   buildScheduledJobCreateCommand,
+  buildScheduledJobDeleteCommand,
+  buildScheduledJobPauseCommand,
+  buildScheduledJobResumeCommand,
+  buildScheduledJobRunNowCommand,
   JOB_SLASH_COMMAND_USAGE,
   parseJobSlashCommand,
 } from "./scheduledJobs";
@@ -81,5 +85,43 @@ describe("buildScheduledJobCreateCommand", () => {
     });
     expect(String(command.commandId).length).toBeGreaterThan(0);
     expect(String(command.jobId).length).toBeGreaterThan(0);
+  });
+});
+
+describe("scheduled job action command builders", () => {
+  const jobId = ScheduledJobId.make("job-1");
+  const createdAt = "2026-04-16T12:00:00.000Z";
+
+  it("builds a manual run trigger command with fresh run artifacts", () => {
+    const command = buildScheduledJobRunNowCommand({ jobId, createdAt });
+
+    expect(command).toMatchObject({
+      type: "scheduled-job.run.trigger",
+      jobId,
+      trigger: "manual",
+      createdAt,
+    });
+    expect(String(command.commandId).length).toBeGreaterThan(0);
+    expect(String(command.runId).length).toBeGreaterThan(0);
+    expect(String(command.threadId).length).toBeGreaterThan(0);
+    expect(String(command.messageId).length).toBeGreaterThan(0);
+  });
+
+  it("builds pause, resume, and delete commands consistently", () => {
+    expect(buildScheduledJobPauseCommand({ jobId, createdAt })).toMatchObject({
+      type: "scheduled-job.pause",
+      jobId,
+      createdAt,
+    });
+    expect(buildScheduledJobResumeCommand({ jobId, createdAt })).toMatchObject({
+      type: "scheduled-job.resume",
+      jobId,
+      createdAt,
+    });
+    expect(buildScheduledJobDeleteCommand({ jobId, createdAt })).toMatchObject({
+      type: "scheduled-job.delete",
+      jobId,
+      createdAt,
+    });
   });
 });

@@ -9,12 +9,14 @@ import {
   setThreadChangedFilesExpanded,
   syncProjects,
   syncThreads,
+  toggleJobRunListForProject,
   type UiState,
 } from "./uiStateStore";
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
+    jobRunListExpandedByProjectId: {},
     projectOrder: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
@@ -297,6 +299,34 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.projectExpandedById[project1]).toBe(false);
     expect(next.projectOrder).toEqual([project1]);
+  });
+
+  it("toggleJobRunListForProject toggles the nested job-run folder", () => {
+    const project1 = ProjectId.make("project-1");
+    const initialState = makeUiState();
+
+    const collapsed = toggleJobRunListForProject(initialState, project1);
+    const expanded = toggleJobRunListForProject(collapsed, project1);
+
+    expect(collapsed.jobRunListExpandedByProjectId[project1]).toBe(false);
+    expect(expanded.jobRunListExpandedByProjectId[project1]).toBe(true);
+  });
+
+  it("syncProjects preserves and prunes job-run folder expansion state", () => {
+    const project1 = ProjectId.make("project-1");
+    const project2 = ProjectId.make("project-2");
+    const initialState = makeUiState({
+      jobRunListExpandedByProjectId: {
+        [project1]: false,
+        [project2]: true,
+      },
+    });
+
+    const next = syncProjects(initialState, [{ key: project1, cwd: "/tmp/project-1" }]);
+
+    expect(next.jobRunListExpandedByProjectId).toEqual({
+      [project1]: false,
+    });
   });
 
   it("clearThreadUi removes visit state for deleted threads", () => {

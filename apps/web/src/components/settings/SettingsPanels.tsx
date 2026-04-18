@@ -20,11 +20,8 @@ import { useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import {
   CommandId,
-  MessageId,
   PROVIDER_DISPLAY_NAMES,
   ScheduledJobId,
-  ScheduledJobRunId,
-  ThreadId,
   type DesktopUpdateChannel,
   type ThreadFollowUpMode,
   type ScopedThreadRef,
@@ -72,7 +69,13 @@ import {
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "../../lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
-import { buildScheduledJobCreateCommand } from "../../scheduledJobs";
+import {
+  buildScheduledJobCreateCommand,
+  buildScheduledJobDeleteCommand,
+  buildScheduledJobPauseCommand,
+  buildScheduledJobResumeCommand,
+  buildScheduledJobRunNowCommand,
+} from "../../scheduledJobs";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
@@ -1803,47 +1806,30 @@ export function ScheduledJobsPanel() {
         return;
       }
       const api = ensureEnvironmentApi(project.environmentId);
-      const commandId = CommandId.make(crypto.randomUUID());
       const createdAt = new Date().toISOString();
       switch (action) {
         case "pause":
-          await api.orchestration.dispatchCommand({
-            type: "scheduled-job.pause",
-            commandId,
-            jobId: job.id,
-            createdAt,
-          });
+          await api.orchestration.dispatchCommand(
+            buildScheduledJobPauseCommand({ jobId: job.id, createdAt }),
+          );
           return;
         case "resume":
-          await api.orchestration.dispatchCommand({
-            type: "scheduled-job.resume",
-            commandId,
-            jobId: job.id,
-            createdAt,
-          });
+          await api.orchestration.dispatchCommand(
+            buildScheduledJobResumeCommand({ jobId: job.id, createdAt }),
+          );
           return;
         case "delete":
-          await api.orchestration.dispatchCommand({
-            type: "scheduled-job.delete",
-            commandId,
-            jobId: job.id,
-            createdAt,
-          });
+          await api.orchestration.dispatchCommand(
+            buildScheduledJobDeleteCommand({ jobId: job.id, createdAt }),
+          );
           if (editingJobId === job.id) {
             resetForm();
           }
           return;
         case "run":
-          await api.orchestration.dispatchCommand({
-            type: "scheduled-job.run.trigger",
-            commandId,
-            jobId: job.id,
-            runId: ScheduledJobRunId.make(crypto.randomUUID()),
-            threadId: ThreadId.make(crypto.randomUUID()),
-            messageId: MessageId.make(crypto.randomUUID()),
-            trigger: "manual",
-            createdAt,
-          });
+          await api.orchestration.dispatchCommand(
+            buildScheduledJobRunNowCommand({ jobId: job.id, createdAt }),
+          );
           return;
       }
     },

@@ -17,12 +17,14 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 
 interface PersistedUiState {
   expandedProjectCwds?: string[];
+  collapsedJobRunProjectIds?: string[];
   projectOrderCwds?: string[];
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
 }
 
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
+  jobRunListExpandedByProjectId: Record<string, boolean>;
   projectOrder: string[];
 }
 
@@ -45,6 +47,7 @@ export interface SyncThreadInput {
 
 const initialState: UiState = {
   projectExpandedById: {},
+  jobRunListExpandedByProjectId: {},
   projectOrder: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
@@ -76,6 +79,10 @@ function readPersistedState(): UiState {
     hydratePersistedProjectState(parsed);
     return {
       ...initialState,
+      jobRunListExpandedByProjectId: sanitizePersistedBooleanRecord(
+        parsed.collapsedJobRunProjectIds,
+        false,
+      ),
       threadChangedFilesExpandedById: sanitizePersistedThreadChangedFilesExpanded(
         parsed.threadChangedFilesExpandedById,
       ),
@@ -83,6 +90,18 @@ function readPersistedState(): UiState {
   } catch {
     return initialState;
   }
+}
+
+function sanitizePersistedBooleanRecord(
+  keys: readonly unknown[] | undefined,
+  value: boolean,
+): Record<string, boolean> {
+  if (!Array.isArray(keys)) {
+    return {};
+  }
+  return Object.fromEntries(
+    keys.flatMap((key) => (typeof key === "string" && key.length > 0 ? [[key, value]] : [])),
+  );
 }
 
 function sanitizePersistedThreadChangedFilesExpanded(
@@ -139,6 +158,9 @@ function persistState(state: UiState): void {
         const cwd = currentProjectCwdById.get(projectId);
         return cwd ? [cwd] : [];
       });
+    const collapsedJobRunProjectIds = Object.entries(state.jobRunListExpandedByProjectId).flatMap(
+      ([projectId, expanded]) => (!expanded ? [projectId] : []),
+    );
     const projectOrderCwds = state.projectOrder.flatMap((projectId) => {
       const cwd = currentProjectCwdById.get(projectId);
       return cwd ? [cwd] : [];
@@ -155,6 +177,7 @@ function persistState(state: UiState): void {
       PERSISTED_STATE_KEY,
       JSON.stringify({
         expandedProjectCwds,
+        collapsedJobRunProjectIds,
         projectOrderCwds,
         threadChangedFilesExpandedById,
       } satisfies PersistedUiState),
@@ -223,7 +246,9 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
     projects.some((project) => previousProjectCwdById.get(project.key) !== project.cwd);
 
   const nextExpandedById: Record<string, boolean> = {};
+  const nextJobRunListExpandedByProjectId: Record<string, boolean> = {};
   const previousExpandedById = state.projectExpandedById;
+  const previousJobRunListExpandedByProjectId = state.jobRunListExpandedByProjectId;
   const persistedOrderByCwd = new Map(
     persistedProjectOrderCwds.map((cwd, index) => [cwd, index] as const),
   );
@@ -236,6 +261,12 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
         ? persistedExpandedProjectCwds.has(project.cwd)
         : true);
     nextExpandedById[project.key] = expanded;
+    nextJobRunListExpandedByProjectId[project.key] =
+      previousJobRunListExpandedByProjectId[project.key] ??
+      (previousProjectIdForCwd
+        ? previousJobRunListExpandedByProjectId[previousProjectIdForCwd]
+        : undefined) ??
+      true;
     return {
       id: project.key,
       cwd: project.cwd,
@@ -294,6 +325,7 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
 
   if (
     recordsEqual(state.projectExpandedById, nextExpandedById) &&
+    recordsEqual(state.jobRunListExpandedByProjectId, nextJobRunListExpandedByProjectId) &&
     projectOrdersEqual(state.projectOrder, nextProjectOrder) &&
     !cwdMappingChanged
   ) {
@@ -303,6 +335,7 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
   return {
     ...state,
     projectExpandedById: nextExpandedById,
+    jobRunListExpandedByProjectId: nextJobRunListExpandedByProjectId,
     projectOrder: nextProjectOrder,
   };
 }
@@ -480,6 +513,17 @@ export function setProjectExpanded(state: UiState, projectId: string, expanded: 
   };
 }
 
+export function toggleJobRunListForProject(state: UiState, projectId: string): UiState {
+  const expanded = state.jobRunListExpandedByProjectId[projectId] ?? true;
+  return {
+    ...state,
+    jobRunListExpandedByProjectId: {
+      ...state.jobRunListExpandedByProjectId,
+      [projectId]: !expanded,
+    },
+  };
+}
+
 export function reorderProjects(
   state: UiState,
   draggedProjectIds: readonly string[],
@@ -532,6 +576,7 @@ interface UiStateStore extends UiState {
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   toggleProject: (projectId: string) => void;
   setProjectExpanded: (projectId: string, expanded: boolean) => void;
+  toggleJobRunListForProject: (projectId: string) => void;
   reorderProjects: (
     draggedProjectIds: readonly string[],
     targetProjectIds: readonly string[],
@@ -552,6 +597,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
   setProjectExpanded: (projectId, expanded) =>
     set((state) => setProjectExpanded(state, projectId, expanded)),
+  toggleJobRunListForProject: (projectId) =>
+    set((state) => toggleJobRunListForProject(state, projectId)),
   reorderProjects: (draggedProjectIds, targetProjectIds) =>
     set((state) => reorderProjects(state, draggedProjectIds, targetProjectIds)),
 }));
