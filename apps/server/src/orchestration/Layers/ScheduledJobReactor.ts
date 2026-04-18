@@ -2,6 +2,9 @@ import {
   CommandId,
   MessageId,
   type OrchestrationEvent,
+  ProjectId,
+  type ScheduledJob,
+  ScheduledJobId,
   ScheduledJobRunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -62,6 +65,35 @@ const fingerprintJson = (value: unknown): string =>
 
 const isManifestCommandId = (commandId: CommandId | null): boolean =>
   commandId !== null && String(commandId).startsWith(MANIFEST_COMMAND_PREFIX);
+
+const normalizeManifestMatchTitle = (title: string): string => title.trim().toLocaleLowerCase();
+
+export function resolveManifestScheduledJobTarget(input: {
+  readonly scheduledJobs: ReadonlyArray<ScheduledJob>;
+  readonly projectId: ProjectId;
+  readonly manifestJobId: ScheduledJobId;
+  readonly manifestTitle: string;
+}): ScheduledJob | null {
+  const manifestJob = input.scheduledJobs.find((job) => job.id === input.manifestJobId) ?? null;
+  if (manifestJob && manifestJob.deletedAt === null) {
+    return manifestJob;
+  }
+
+  const titleCandidates = new Set<string>([
+    normalizeManifestMatchTitle(input.manifestTitle),
+    ...(manifestJob ? [normalizeManifestMatchTitle(manifestJob.title)] : []),
+  ]);
+
+  return (
+    input.scheduledJobs.find(
+      (job) =>
+        job.projectId === input.projectId &&
+        job.deletedAt === null &&
+        parseScheduledJobManifestId(job.id) === null &&
+        titleCandidates.has(normalizeManifestMatchTitle(job.title)),
+    ) ?? null
+  );
+}
 
 function manifestPatchForEvent(event: ManifestWritableJobEvent): ScheduledJobManifestPatch {
   switch (event.type) {
@@ -285,8 +317,15 @@ const makeScheduledJobReactor = Effect.gen(function* () {
 
       for (const manifestJob of parsed.jobs) {
         const jobId = scheduledJobIdForManifest(project.id, manifestJob.localId);
-        const existingJob = readModel.scheduledJobs.find((job) => job.id === jobId) ?? null;
-        if (existingJob && existingJob.deletedAt !== null) {
+        const existingJob = resolveManifestScheduledJobTarget({
+          scheduledJobs: readModel.scheduledJobs,
+          projectId: project.id,
+          manifestJobId: jobId,
+          manifestTitle: manifestJob.title,
+        });
+        const deletedManifestJob =
+          readModel.scheduledJobs.find((job) => job.id === jobId && job.deletedAt !== null) ?? null;
+        if (!existingJob && deletedManifestJob) {
           continue;
         }
         const schedule = {
@@ -362,7 +401,7 @@ const makeScheduledJobReactor = Effect.gen(function* () {
             .dispatch({
               type: "scheduled-job.update",
               commandId: manifestCommandId("update", project.id, manifestJob.localId, fingerprint),
-              jobId,
+              jobId: existingJob.id,
               title: manifestJob.title,
               prompt: manifestJob.prompt,
               modelSelection: manifestJob.modelSelection,
@@ -393,7 +432,7 @@ const makeScheduledJobReactor = Effect.gen(function* () {
                 manifestJob.localId,
                 fingerprint,
               ),
-              jobId,
+              jobId: existingJob.id,
               createdAt: nowIso,
             })
             .pipe(
