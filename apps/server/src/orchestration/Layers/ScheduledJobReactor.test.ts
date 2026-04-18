@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   manifestTargetCommandFingerprint,
+  resolveManifestWritableJobLocalId,
   resolveManifestScheduledJobTarget,
 } from "./ScheduledJobReactor.ts";
 import { scheduledJobIdForManifest } from "../jobManifests.ts";
@@ -111,5 +112,91 @@ describe("manifestTargetCommandFingerprint", () => {
     });
 
     expect(first).not.toBe(second);
+  });
+});
+
+describe("resolveManifestWritableJobLocalId", () => {
+  it("resolves direct manifest-backed jobs", () => {
+    expect(
+      resolveManifestWritableJobLocalId({
+        scheduledJobs: [makeJob({ id: manifestJobId })],
+        projectId,
+        jobId: manifestJobId,
+        manifestJobs: [
+          {
+            localId: "social-loop",
+            title: "Social loop",
+            prompt: "Run social engagement.",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5.4",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            status: "active",
+            intervalMinutes: 360,
+          },
+        ],
+      }),
+    ).toBe("social-loop");
+  });
+
+  it("resolves active UI replacement jobs for deleted manifest-backed jobs", () => {
+    const uiJobId = ScheduledJobId.make("ui-created-job");
+
+    expect(
+      resolveManifestWritableJobLocalId({
+        scheduledJobs: [
+          makeJob({
+            id: manifestJobId,
+            deletedAt: "2026-04-17T00:00:00.000Z",
+            nextRunAt: null,
+          }),
+          makeJob({ id: uiJobId }),
+        ],
+        projectId,
+        jobId: uiJobId,
+        manifestJobs: [
+          {
+            localId: "social-loop",
+            title: "Social loop",
+            prompt: "Run social engagement.",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5.4",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            status: "active",
+            intervalMinutes: 360,
+          },
+        ],
+      }),
+    ).toBe("social-loop");
+  });
+
+  it("does not resolve unrelated UI jobs", () => {
+    expect(
+      resolveManifestWritableJobLocalId({
+        scheduledJobs: [makeJob({ id: ScheduledJobId.make("ui-created-job") })],
+        projectId,
+        jobId: ScheduledJobId.make("ui-created-job"),
+        manifestJobs: [
+          {
+            localId: "social-loop",
+            title: "Social loop",
+            prompt: "Run social engagement.",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5.4",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            status: "active",
+            intervalMinutes: 360,
+          },
+        ],
+      }),
+    ).toBeNull();
   });
 });

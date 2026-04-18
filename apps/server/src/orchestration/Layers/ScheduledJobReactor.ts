@@ -22,6 +22,7 @@ import {
   parseScheduledJobManifest,
   parseScheduledJobManifestId,
   scheduledJobIdForManifest,
+  type ScheduledJobManifestEntry,
   type ScheduledJobManifestPatch,
   T3_JOB_MANIFEST_RELATIVE_PATH,
 } from "../jobManifests.ts";
@@ -99,6 +100,46 @@ export function resolveManifestScheduledJobTarget(input: {
         titleCandidates.has(normalizeManifestMatchTitle(job.title)),
     ) ?? null
   );
+}
+
+export function resolveManifestWritableJobLocalId(input: {
+  readonly scheduledJobs: ReadonlyArray<ScheduledJob>;
+  readonly projectId: ProjectId;
+  readonly jobId: ScheduledJobId;
+  readonly manifestJobs: ReadonlyArray<ScheduledJobManifestEntry>;
+}): string | null {
+  const directManifestId = parseScheduledJobManifestId(input.jobId);
+  if (directManifestId && directManifestId.projectId === input.projectId) {
+    return directManifestId.localId;
+  }
+
+  const targetJob = input.scheduledJobs.find((job) => job.id === input.jobId) ?? null;
+  if (
+    !targetJob ||
+    targetJob.projectId !== input.projectId ||
+    parseScheduledJobManifestId(targetJob.id) !== null
+  ) {
+    return null;
+  }
+
+  for (const manifestJob of input.manifestJobs) {
+    const manifestJobId = scheduledJobIdForManifest(input.projectId, manifestJob.localId);
+    const deletedManifestJob =
+      input.scheduledJobs.find((job) => job.id === manifestJobId && job.deletedAt !== null) ?? null;
+    if (!deletedManifestJob) {
+      continue;
+    }
+
+    const titleCandidates = new Set([
+      normalizeManifestMatchTitle(manifestJob.title),
+      normalizeManifestMatchTitle(deletedManifestJob.title),
+    ]);
+    if (titleCandidates.has(normalizeManifestMatchTitle(targetJob.title))) {
+      return manifestJob.localId;
+    }
+  }
+
+  return null;
 }
 
 function manifestPatchForEvent(event: ManifestWritableJobEvent): ScheduledJobManifestPatch {
@@ -513,14 +554,16 @@ const makeScheduledJobReactor = Effect.gen(function* () {
       return;
     }
 
-    const manifestId = parseScheduledJobManifestId(event.payload.jobId);
-    if (!manifestId) {
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const eventJob = readModel.scheduledJobs.find((job) => job.id === event.payload.jobId) ?? null;
+    const directManifestId = parseScheduledJobManifestId(event.payload.jobId);
+    const projectId = directManifestId?.projectId ?? eventJob?.projectId ?? null;
+    if (!projectId) {
       return;
     }
 
-    const readModel = yield* orchestrationEngine.getReadModel();
     const project = readModel.projects.find(
-      (entry) => entry.id === manifestId.projectId && entry.deletedAt === null,
+      (entry) => entry.id === projectId && entry.deletedAt === null,
     );
     if (!project) {
       return;
@@ -535,7 +578,7 @@ const makeScheduledJobReactor = Effect.gen(function* () {
       Effect.catch((cause) =>
         Effect.logWarning("failed to read T3 scheduled job manifest for write-back", {
           projectId: project.id,
-          localId: manifestId.localId,
+          jobId: event.payload.jobId,
           manifestPath,
           cause,
         }).pipe(Effect.as(null)),
@@ -545,13 +588,24 @@ const makeScheduledJobReactor = Effect.gen(function* () {
       return;
     }
 
+    const parsed = parseScheduledJobManifest(rawManifest, project.defaultModelSelection);
+    const localId = resolveManifestWritableJobLocalId({
+      scheduledJobs: readModel.scheduledJobs,
+      projectId: project.id,
+      jobId: event.payload.jobId,
+      manifestJobs: parsed.jobs,
+    });
+    if (!localId) {
+      return;
+    }
+
     const patch = manifestPatchForEvent(event);
 
-    const result = applyScheduledJobManifestPatch(rawManifest, manifestId.localId, patch);
+    const result = applyScheduledJobManifestPatch(rawManifest, localId, patch);
     for (const error of result.errors) {
       yield* Effect.logWarning("failed to update T3 scheduled job manifest", {
         projectId: project.id,
-        localId: manifestId.localId,
+        localId,
         manifestPath,
         error,
       });
@@ -564,7 +618,7 @@ const makeScheduledJobReactor = Effect.gen(function* () {
       Effect.catch((cause) =>
         Effect.logWarning("failed to write T3 scheduled job manifest", {
           projectId: project.id,
-          localId: manifestId.localId,
+          localId,
           manifestPath,
           cause,
         }),
