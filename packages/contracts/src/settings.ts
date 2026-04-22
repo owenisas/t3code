@@ -12,6 +12,7 @@ import {
 import {
   DEFAULT_THREAD_FOLLOW_UP_MODE,
   ModelSelection,
+  ProviderKind,
   ThreadFollowUpMode,
 } from "./orchestration.ts";
 
@@ -44,6 +45,12 @@ export const ClientSettingsSchema = Schema.Struct({
   activeTurnFollowUpMode: ThreadFollowUpMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_FOLLOW_UP_MODE)),
   ),
+  favorites: Schema.Array(
+    Schema.Struct({
+      provider: ProviderKind,
+      model: TrimmedNonEmptyString,
+    }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -248,6 +255,7 @@ const OpenCodeSettingsPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
+  // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   addProjectBaseDirectory: Schema.optionalKey(Schema.String),
@@ -268,3 +276,25 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
+
+export const ClientSettingsPatch = Schema.Struct({
+  confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
+  confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
+  diffWordWrap: Schema.optionalKey(Schema.Boolean),
+  favorites: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        provider: ProviderKind,
+        model: TrimmedNonEmptyString,
+      }),
+    ),
+  ),
+  sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
+  sidebarProjectGroupingOverrides: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),
+  ),
+  sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
+  sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
+  timestampFormat: Schema.optionalKey(TimestampFormat),
+});
+export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

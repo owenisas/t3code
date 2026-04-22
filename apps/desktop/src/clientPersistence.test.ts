@@ -53,6 +53,7 @@ const clientSettings: ClientSettings = {
   confirmThreadDelete: false,
   diffWordWrap: true,
   activeTurnFollowUpMode: "steer",
+  favorites: [],
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {
     "environment-1:/tmp/project-a": "separate",
