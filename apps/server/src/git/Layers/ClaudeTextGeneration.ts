@@ -48,6 +48,80 @@ const ClaudeOutputEnvelope = Schema.Struct({
   structured_output: Schema.Unknown,
 });
 
+const ClaudePlainOutputEnvelope = Schema.Struct({
+  result: Schema.String,
+});
+
+function isClaudeStructuredOutputRetryFailure(error: TextGenerationError): boolean {
+  return (
+    error.detail.includes("error_max_structured_output_retries") ||
+    error.detail.includes("Failed to provide valid structured output")
+  );
+}
+
+function extractJsonObjectText(value: string): string | null {
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(value);
+  const candidate = fenced?.[1]?.trim() ?? value.trim();
+  const start = candidate.indexOf("{");
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < candidate.length; index += 1) {
+    const char = candidate[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) {
+      continue;
+    }
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return candidate.slice(start, index + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function parsePlainYoloReviewResult(
+  result: string,
+): Effect.Effect<YoloReviewGenerationResult, TextGenerationError> {
+  const jsonText = extractJsonObjectText(result);
+  if (!jsonText) {
+    return Effect.fail(
+      new TextGenerationError({
+        operation: "generateYoloReview",
+        detail: "Claude YOLO fallback did not return a JSON object.",
+      }),
+    );
+  }
+
+  return Effect.try({
+    try: () => JSON.parse(jsonText) as unknown,
+    catch: (cause) =>
+      new TextGenerationError({
+        operation: "generateYoloReview",
+        detail: "Claude YOLO fallback returned invalid JSON.",
+        cause,
+      }),
+  }).pipe(Effect.flatMap(normalizeYoloReviewStructuredOutput));
+}
+
 function normalizeBoolean(value: unknown): boolean | null {
   if (typeof value === "boolean") return value;
   if (typeof value !== "string") return null;
@@ -275,6 +349,126 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
     );
   });
 
+  const runClaudePlainJson = Effect.fn("runClaudePlainJson")(function* ({
+    operation,
+    cwd,
+    prompt,
+    modelSelection,
+  }: {
+    operation: "generateYoloReview";
+    cwd: string;
+    prompt: string;
+    modelSelection: ClaudeModelSelection;
+  }) {
+    const normalizedOptions = normalizeClaudeModelOptionsWithCapabilities(
+      getClaudeModelCapabilities(modelSelection.model),
+      modelSelection.options,
+    );
+    const settings = {
+      ...(typeof normalizedOptions?.thinking === "boolean"
+        ? { alwaysThinkingEnabled: normalizedOptions.thinking }
+        : {}),
+      ...(normalizedOptions?.fastMode ? { fastMode: true } : {}),
+    };
+    const claudeSettings = yield* Effect.map(
+      serverSettingsService.getSettings,
+      (settings) => settings.providers.claudeAgent,
+    ).pipe(Effect.catch(() => Effect.undefined));
+
+    const command = ChildProcess.make(
+      claudeSettings?.binaryPath || "claude",
+      [
+        "-p",
+        "--output-format",
+        "json",
+        "--model",
+        resolveClaudeApiModelId(modelSelection),
+        ...(normalizedOptions?.effort ? ["--effort", normalizedOptions.effort] : []),
+        ...(Object.keys(settings).length > 0 ? ["--settings", JSON.stringify(settings)] : []),
+        "--permission-mode",
+        "plan",
+        "--tools",
+        "",
+      ],
+      {
+        cwd,
+        shell: process.platform === "win32",
+        stdin: {
+          stream: Stream.encodeText(Stream.make(prompt)),
+        },
+      },
+    );
+
+    const stdout = yield* Effect.gen(function* () {
+      const child = yield* commandSpawner
+        .spawn(command)
+        .pipe(
+          Effect.mapError((cause) =>
+            normalizeCliError("claude", operation, cause, "Failed to spawn Claude CLI process"),
+          ),
+        );
+
+      const [stdout, stderr, exitCode] = yield* Effect.all(
+        [
+          readStreamAsString(operation, child.stdout),
+          readStreamAsString(operation, child.stderr),
+          child.exitCode.pipe(
+            Effect.mapError((cause) =>
+              normalizeCliError("claude", operation, cause, "Failed to read Claude CLI exit code"),
+            ),
+          ),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      if (exitCode !== 0) {
+        const stderrDetail = stderr.trim();
+        const stdoutDetail = stdout.trim();
+        const detail = stderrDetail.length > 0 ? stderrDetail : stdoutDetail;
+        return yield* new TextGenerationError({
+          operation,
+          detail:
+            detail.length > 0
+              ? `Claude CLI fallback command failed: ${detail}`
+              : `Claude CLI fallback command failed with code ${exitCode}.`,
+        });
+      }
+
+      return stdout;
+    }).pipe(
+      Effect.scoped,
+      Effect.timeoutOption(CLAUDE_TIMEOUT_MS),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation,
+                detail: "Claude CLI fallback request timed out.",
+              }),
+            ),
+          onSome: (value) => Effect.succeed(value),
+        }),
+      ),
+    );
+
+    const envelope = yield* Schema.decodeEffect(Schema.fromJsonString(ClaudePlainOutputEnvelope))(
+      stdout,
+    ).pipe(
+      Effect.catchTag("SchemaError", (cause) =>
+        Effect.fail(
+          new TextGenerationError({
+            operation,
+            detail: "Claude CLI fallback returned unexpected output format.",
+            cause,
+          }),
+        ),
+      ),
+    );
+
+    return yield* parsePlainYoloReviewResult(envelope.result);
+  });
+
   // ---------------------------------------------------------------------------
   // TextGenerationShape methods
   // ---------------------------------------------------------------------------
@@ -405,8 +599,9 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
     "ClaudeTextGeneration.generateYoloReview",
   )(function* (input) {
     const { prompt, outputSchema } = buildYoloReviewPrompt(input);
+    const modelSelection = input.modelSelection;
 
-    if (input.modelSelection.provider !== "claudeAgent") {
+    if (modelSelection.provider !== "claudeAgent") {
       return yield* new TextGenerationError({
         operation: "generateYoloReview",
         detail: "Invalid model selection.",
@@ -418,8 +613,27 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
       cwd: input.cwd,
       prompt,
       outputSchemaJson: outputSchema,
-      modelSelection: input.modelSelection,
-    });
+      modelSelection,
+    }).pipe(
+      Effect.catch((error) => {
+        if (!isClaudeStructuredOutputRetryFailure(error)) {
+          return Effect.fail(error);
+        }
+
+        return runClaudePlainJson({
+          operation: "generateYoloReview",
+          cwd: input.cwd,
+          prompt: [
+            prompt,
+            "",
+            "Fallback output mode:",
+            "Return ONLY one compact JSON object with keys goalReached, confidence, missing, nextPrompt, reviewNote.",
+            "Do not wrap the JSON in markdown. Do not use tools.",
+          ].join("\n"),
+          modelSelection,
+        });
+      }),
+    );
 
     return yield* normalizeYoloReviewStructuredOutput(generated);
   });

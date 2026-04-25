@@ -54,6 +54,18 @@ function makeFakeClaudeBinary(dir: string) {
         'if [ -n "$T3_FAKE_CLAUDE_STDERR" ]; then',
         '  printf "%s\\n" "$T3_FAKE_CLAUDE_STDERR" >&2',
         "fi",
+        'if printf "%s" "$args" | grep -F -- "--json-schema" >/dev/null; then',
+        '  if [ -n "$T3_FAKE_CLAUDE_SCHEMA_OUTPUT" ]; then',
+        '    printf "%s" "$T3_FAKE_CLAUDE_SCHEMA_OUTPUT"',
+        "  else",
+        '    printf "%s" "$T3_FAKE_CLAUDE_OUTPUT"',
+        "  fi",
+        '  exit "${T3_FAKE_CLAUDE_SCHEMA_EXIT_CODE:-${T3_FAKE_CLAUDE_EXIT_CODE:-0}}"',
+        "fi",
+        'if [ -n "$T3_FAKE_CLAUDE_PLAIN_OUTPUT" ]; then',
+        '  printf "%s" "$T3_FAKE_CLAUDE_PLAIN_OUTPUT"',
+        '  exit "${T3_FAKE_CLAUDE_PLAIN_EXIT_CODE:-0}"',
+        "fi",
         'printf "%s" "$T3_FAKE_CLAUDE_OUTPUT"',
         'exit "${T3_FAKE_CLAUDE_EXIT_CODE:-0}"',
         "",
@@ -72,6 +84,10 @@ function withFakeClaudeEnv<A, E, R>(
     argsMustContain?: string;
     argsMustNotContain?: string;
     stdinMustContain?: string;
+    schemaOutput?: string;
+    schemaExitCode?: number;
+    plainOutput?: string;
+    plainExitCode?: number;
   },
   effect: Effect.Effect<A, E, R>,
 ) {
@@ -87,6 +103,10 @@ function withFakeClaudeEnv<A, E, R>(
       const previousArgsMustContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
       const previousArgsMustNotContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
       const previousStdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
+      const previousSchemaOutput = process.env.T3_FAKE_CLAUDE_SCHEMA_OUTPUT;
+      const previousSchemaExitCode = process.env.T3_FAKE_CLAUDE_SCHEMA_EXIT_CODE;
+      const previousPlainOutput = process.env.T3_FAKE_CLAUDE_PLAIN_OUTPUT;
+      const previousPlainExitCode = process.env.T3_FAKE_CLAUDE_PLAIN_EXIT_CODE;
 
       yield* Effect.sync(() => {
         process.env.PATH = `${binDir}:${previousPath ?? ""}`;
@@ -121,6 +141,30 @@ function withFakeClaudeEnv<A, E, R>(
         } else {
           delete process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
         }
+
+        if (input.schemaOutput !== undefined) {
+          process.env.T3_FAKE_CLAUDE_SCHEMA_OUTPUT = input.schemaOutput;
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_SCHEMA_OUTPUT;
+        }
+
+        if (input.schemaExitCode !== undefined) {
+          process.env.T3_FAKE_CLAUDE_SCHEMA_EXIT_CODE = String(input.schemaExitCode);
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_SCHEMA_EXIT_CODE;
+        }
+
+        if (input.plainOutput !== undefined) {
+          process.env.T3_FAKE_CLAUDE_PLAIN_OUTPUT = input.plainOutput;
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_PLAIN_OUTPUT;
+        }
+
+        if (input.plainExitCode !== undefined) {
+          process.env.T3_FAKE_CLAUDE_PLAIN_EXIT_CODE = String(input.plainExitCode);
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_PLAIN_EXIT_CODE;
+        }
       });
 
       return {
@@ -131,6 +175,10 @@ function withFakeClaudeEnv<A, E, R>(
         previousArgsMustContain,
         previousArgsMustNotContain,
         previousStdinMustContain,
+        previousSchemaOutput,
+        previousSchemaExitCode,
+        previousPlainOutput,
+        previousPlainExitCode,
       };
     }),
     () => effect,
@@ -172,6 +220,30 @@ function withFakeClaudeEnv<A, E, R>(
           delete process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
         } else {
           process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN = previous.previousStdinMustContain;
+        }
+
+        if (previous.previousSchemaOutput === undefined) {
+          delete process.env.T3_FAKE_CLAUDE_SCHEMA_OUTPUT;
+        } else {
+          process.env.T3_FAKE_CLAUDE_SCHEMA_OUTPUT = previous.previousSchemaOutput;
+        }
+
+        if (previous.previousSchemaExitCode === undefined) {
+          delete process.env.T3_FAKE_CLAUDE_SCHEMA_EXIT_CODE;
+        } else {
+          process.env.T3_FAKE_CLAUDE_SCHEMA_EXIT_CODE = previous.previousSchemaExitCode;
+        }
+
+        if (previous.previousPlainOutput === undefined) {
+          delete process.env.T3_FAKE_CLAUDE_PLAIN_OUTPUT;
+        } else {
+          process.env.T3_FAKE_CLAUDE_PLAIN_OUTPUT = previous.previousPlainOutput;
+        }
+
+        if (previous.previousPlainExitCode === undefined) {
+          delete process.env.T3_FAKE_CLAUDE_PLAIN_EXIT_CODE;
+        } else {
+          process.env.T3_FAKE_CLAUDE_PLAIN_EXIT_CODE = previous.previousPlainExitCode;
         }
       }),
   );
@@ -381,6 +453,56 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGenerationLive", (it) => {
         expect(generated.goalReached).toBe(false);
         expect(generated.confidence).toBe(70);
         expect(generated.missing).toEqual(["Verification is missing"]);
+      }),
+    ),
+  );
+
+  it.effect("falls back to plain JSON when Claude YOLO structured output retries fail", () =>
+    withFakeClaudeEnv(
+      {
+        output: "",
+        schemaOutput: JSON.stringify({
+          type: "result",
+          subtype: "error_max_structured_output_retries",
+          errors: ["Failed to provide valid structured output after 5 attempts"],
+        }),
+        schemaExitCode: 1,
+        plainOutput: JSON.stringify({
+          result: [
+            "```json",
+            JSON.stringify({
+              goalReached: false,
+              confidence: 62,
+              missing: ["The worker did not verify the implementation"],
+              nextPrompt: "Verify the implementation and summarize the result.",
+              reviewNote: "The implementation still needs verification.",
+            }),
+            "```",
+          ].join("\n"),
+        }),
+        argsMustContain: "--permission-mode plan --tools",
+        argsMustNotContain: "--dangerously-skip-permissions",
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generateYoloReview({
+          cwd: process.cwd(),
+          goal: "Finish the feature",
+          transcript: "User: Finish the feature.",
+          latestAssistantText: "Implemented the feature.",
+          checkpointSummary: "No checkpoint summary is available.",
+          iteration: 1,
+          maxIterations: 10,
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-sonnet-4-6",
+          },
+        });
+
+        expect(generated.goalReached).toBe(false);
+        expect(generated.confidence).toBe(62);
+        expect(generated.nextPrompt).toBe("Verify the implementation and summarize the result.");
       }),
     ),
   );
