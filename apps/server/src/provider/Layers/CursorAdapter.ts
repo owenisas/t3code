@@ -7,7 +7,7 @@ import * as nodePath from "node:path";
 
 import {
   ApprovalRequestId,
-  type CursorModelOptions,
+  type ProviderOptionSelection,
   EventId,
   type ProviderApprovalDecision,
   type ProviderInteractionMode,
@@ -225,7 +225,7 @@ function applyRequestedSessionConfiguration<E>(input: {
   readonly modelSelection:
     | {
         readonly model: string;
-        readonly options?: CursorModelOptions | null | undefined;
+        readonly options?: ReadonlyArray<ProviderOptionSelection> | null | undefined;
       }
     | undefined;
   readonly mapError: (context: {
@@ -238,7 +238,7 @@ function applyRequestedSessionConfiguration<E>(input: {
       yield* applyCursorAcpModelSelection({
         runtime: input.runtime,
         model: input.modelSelection.model,
-        modelOptions: input.modelSelection.options,
+        selections: input.modelSelection.options,
         mapError: ({ cause }) =>
           input.mapError({
             cause,

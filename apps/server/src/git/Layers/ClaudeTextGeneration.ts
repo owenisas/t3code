@@ -33,10 +33,17 @@ import {
   sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "../Utils.ts";
-import { normalizeClaudeModelOptionsWithCapabilities } from "@t3tools/shared/model";
-import { resolveClaudeApiModelId } from "../../provider/Layers/ClaudeProvider.ts";
+import {
+  getModelSelectionStringOptionValue,
+  getProviderOptionDescriptors,
+} from "@t3tools/shared/model";
+import {
+  getClaudeModelCapabilities,
+  normalizeClaudeCliEffort,
+  resolveClaudeApiModelId,
+  resolveClaudeEffort,
+} from "../../provider/Layers/ClaudeProvider.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { getClaudeModelCapabilities } from "../../provider/Layers/ClaudeProvider.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
 
@@ -222,15 +229,24 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
     modelSelection: ClaudeModelSelection;
   }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
     const jsonSchemaStr = JSON.stringify(toJsonSchemaObject(outputSchemaJson));
-    const normalizedOptions = normalizeClaudeModelOptionsWithCapabilities(
-      getClaudeModelCapabilities(modelSelection.model),
-      modelSelection.options,
-    );
+    const caps = getClaudeModelCapabilities(modelSelection.model);
+    const descriptors = getProviderOptionDescriptors({
+      caps,
+      selections: modelSelection.options,
+    });
+    const findDescriptor = (id: string) => descriptors.find((descriptor) => descriptor.id === id);
+    const rawEffortSelection = getModelSelectionStringOptionValue(modelSelection, "effort");
+    const resolvedEffort = resolveClaudeEffort(caps, rawEffortSelection);
+    const cliEffort = normalizeClaudeCliEffort(resolvedEffort);
+    const thinkingDescriptor = findDescriptor("thinking");
+    const fastModeDescriptor = findDescriptor("fastMode");
+    const thinking =
+      thinkingDescriptor?.type === "boolean" ? thinkingDescriptor.currentValue : undefined;
+    const fastMode =
+      fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
     const settings = {
-      ...(typeof normalizedOptions?.thinking === "boolean"
-        ? { alwaysThinkingEnabled: normalizedOptions.thinking }
-        : {}),
-      ...(normalizedOptions?.fastMode ? { fastMode: true } : {}),
+      ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
+      ...(fastMode ? { fastMode: true } : {}),
     };
 
     const claudeSettings = yield* Effect.map(
@@ -253,7 +269,7 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
           jsonSchemaStr,
           "--model",
           resolveClaudeApiModelId(modelSelection),
-          ...(normalizedOptions?.effort ? ["--effort", normalizedOptions.effort] : []),
+          ...(cliEffort ? ["--effort", cliEffort] : []),
           ...(Object.keys(settings).length > 0 ? ["--settings", JSON.stringify(settings)] : []),
           ...safeReviewArgs,
           ...(operation === "generateYoloReview" ? [] : ["--dangerously-skip-permissions"]),
@@ -360,15 +376,24 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
     prompt: string;
     modelSelection: ClaudeModelSelection;
   }) {
-    const normalizedOptions = normalizeClaudeModelOptionsWithCapabilities(
-      getClaudeModelCapabilities(modelSelection.model),
-      modelSelection.options,
-    );
+    const caps = getClaudeModelCapabilities(modelSelection.model);
+    const descriptors = getProviderOptionDescriptors({
+      caps,
+      selections: modelSelection.options,
+    });
+    const findDescriptor = (id: string) => descriptors.find((descriptor) => descriptor.id === id);
+    const rawEffortSelection = getModelSelectionStringOptionValue(modelSelection, "effort");
+    const resolvedEffort = resolveClaudeEffort(caps, rawEffortSelection);
+    const cliEffort = normalizeClaudeCliEffort(resolvedEffort);
+    const thinkingDescriptor = findDescriptor("thinking");
+    const fastModeDescriptor = findDescriptor("fastMode");
+    const thinking =
+      thinkingDescriptor?.type === "boolean" ? thinkingDescriptor.currentValue : undefined;
+    const fastMode =
+      fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
     const settings = {
-      ...(typeof normalizedOptions?.thinking === "boolean"
-        ? { alwaysThinkingEnabled: normalizedOptions.thinking }
-        : {}),
-      ...(normalizedOptions?.fastMode ? { fastMode: true } : {}),
+      ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
+      ...(fastMode ? { fastMode: true } : {}),
     };
     const claudeSettings = yield* Effect.map(
       serverSettingsService.getSettings,
@@ -383,7 +408,7 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
         "json",
         "--model",
         resolveClaudeApiModelId(modelSelection),
-        ...(normalizedOptions?.effort ? ["--effort", normalizedOptions.effort] : []),
+        ...(cliEffort ? ["--effort", cliEffort] : []),
         ...(Object.keys(settings).length > 0 ? ["--settings", JSON.stringify(settings)] : []),
         "--permission-mode",
         "plan",

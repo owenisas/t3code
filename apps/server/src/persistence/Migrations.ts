@@ -44,6 +44,7 @@ import Migration0028 from "./Migrations/027_ProjectionThreadForkOrigin.ts";
 import Migration0029 from "./Migrations/028_RepairProjectionThreadShellSummary.ts";
 import Migration0030 from "./Migrations/029_RepairProjectionPendingApprovals.ts";
 import Migration0031 from "./Migrations/031_ProjectionThreadYolo.ts";
+import Migration0032 from "./Migrations/026_CanonicalizeModelSelectionOptions.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -87,6 +88,7 @@ export const migrationEntries = [
   [29, "RepairProjectionThreadShellSummary", Migration0029],
   [30, "RepairProjectionPendingApprovals", Migration0030],
   [31, "ProjectionThreadYolo", Migration0031],
+  [32, "CanonicalizeModelSelectionOptions", Migration0032],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

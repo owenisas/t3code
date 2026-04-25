@@ -1,5 +1,6 @@
 import { type ProviderKind, type ServerProvider } from "@t3tools/contracts";
 import { EnvironmentId } from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import { page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -66,11 +67,27 @@ vi.mock("../../environments/runtime", () => {
   };
 });
 
-function effort(value: string, isDefault = false) {
+function selectDescriptor(
+  id: string,
+  label: string,
+  options: ReadonlyArray<{ id: string; label: string; isDefault?: boolean }>,
+) {
   return {
-    value,
-    label: value,
-    ...(isDefault ? { isDefault: true } : {}),
+    id,
+    label,
+    type: "select" as const,
+    options: [...options],
+    ...(options.find((option) => option.isDefault)?.id
+      ? { currentValue: options.find((option) => option.isDefault)?.id }
+      : {}),
+  };
+}
+
+function booleanDescriptor(id: string, label: string) {
+  return {
+    id,
+    label,
+    type: "boolean" as const,
   };
 }
 
@@ -78,6 +95,7 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
   {
     provider: "codex",
     schedulingSupport: "external-info",
+    displayName: "Codex",
     enabled: true,
     installed: true,
     version: "0.116.0",
@@ -91,31 +109,38 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
         slug: "gpt-5-codex",
         name: "GPT-5 Codex",
         isCustom: false,
-        capabilities: {
-          reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-          supportsFastMode: true,
-          supportsThinkingToggle: false,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            selectDescriptor("reasoningEffort", "Reasoning", [
+              { id: "low", label: "low" },
+              { id: "medium", label: "medium", isDefault: true },
+              { id: "high", label: "high" },
+            ]),
+            booleanDescriptor("fastMode", "Fast Mode"),
+          ],
+        }),
       },
       {
         slug: "gpt-5.3-codex",
         name: "GPT-5.3 Codex",
         isCustom: false,
-        capabilities: {
-          reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-          supportsFastMode: true,
-          supportsThinkingToggle: false,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            selectDescriptor("reasoningEffort", "Reasoning", [
+              { id: "low", label: "low" },
+              { id: "medium", label: "medium", isDefault: true },
+              { id: "high", label: "high" },
+            ]),
+            booleanDescriptor("fastMode", "Fast Mode"),
+          ],
+        }),
       },
     ],
   },
   {
     provider: "claudeAgent",
     schedulingSupport: "external-info",
+    displayName: "Claude",
     enabled: true,
     installed: true,
     version: "1.0.0",
@@ -129,47 +154,48 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
         slug: "claude-opus-4-6",
         name: "Claude Opus 4.6",
         isCustom: false,
-        capabilities: {
-          reasoningEffortLevels: [
-            effort("low"),
-            effort("medium", true),
-            effort("high"),
-            effort("max"),
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            selectDescriptor("effort", "Reasoning", [
+              { id: "low", label: "low" },
+              { id: "medium", label: "medium", isDefault: true },
+              { id: "high", label: "high" },
+              { id: "max", label: "max" },
+            ]),
+            booleanDescriptor("thinking", "Thinking"),
           ],
-          supportsFastMode: false,
-          supportsThinkingToggle: true,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
+        }),
       },
       {
         slug: "claude-sonnet-4-6",
         name: "Claude Sonnet 4.6",
         isCustom: false,
-        capabilities: {
-          reasoningEffortLevels: [
-            effort("low"),
-            effort("medium", true),
-            effort("high"),
-            effort("max"),
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            selectDescriptor("effort", "Reasoning", [
+              { id: "low", label: "low" },
+              { id: "medium", label: "medium", isDefault: true },
+              { id: "high", label: "high" },
+              { id: "max", label: "max" },
+            ]),
+            booleanDescriptor("thinking", "Thinking"),
           ],
-          supportsFastMode: false,
-          supportsThinkingToggle: true,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
+        }),
       },
       {
         slug: "claude-haiku-4-5",
         name: "Claude Haiku 4.5",
         isCustom: false,
-        capabilities: {
-          reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-          supportsFastMode: false,
-          supportsThinkingToggle: true,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            selectDescriptor("effort", "Reasoning", [
+              { id: "low", label: "low" },
+              { id: "medium", label: "medium", isDefault: true },
+              { id: "high", label: "high" },
+            ]),
+            booleanDescriptor("thinking", "Thinking"),
+          ],
+        }),
       },
     ],
   },
@@ -179,6 +205,7 @@ function buildCodexProvider(models: ServerProvider["models"]): ServerProvider {
   return {
     provider: "codex",
     schedulingSupport: "external-info",
+    displayName: "Codex",
     enabled: true,
     installed: true,
     version: "0.116.0",
@@ -468,13 +495,15 @@ describe("ProviderModelPicker", () => {
           subProvider: "GitHub Copilot",
           shortName: "Opus 4.5",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-            supportsFastMode: false,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("reasoningEffort", "Reasoning", [
+                { id: "low", label: "low" },
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+            ],
+          }),
         },
       ]),
     ];
@@ -662,13 +691,16 @@ describe("ProviderModelPicker", () => {
           slug: "gpt-5-codex",
           name: "GPT-5 Codex",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-            supportsFastMode: true,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("reasoningEffort", "Reasoning", [
+                { id: "low", label: "low" },
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+              booleanDescriptor("fastMode", "Fast Mode"),
+            ],
+          }),
         },
       ]),
       buildOpenCodeProvider([
@@ -677,13 +709,15 @@ describe("ProviderModelPicker", () => {
           name: "Claude Opus 4.7",
           subProvider: "GitHub Copilot",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-            supportsFastMode: false,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("reasoningEffort", "Reasoning", [
+                { id: "low", label: "low" },
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+            ],
+          }),
         },
       ]),
     ];
@@ -716,13 +750,15 @@ describe("ProviderModelPicker", () => {
           name: "Claude Opus 4.7",
           subProvider: "GitHub Copilot",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-            supportsFastMode: false,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("reasoningEffort", "Reasoning", [
+                { id: "low", label: "low" },
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+            ],
+          }),
         },
       ]),
       {
@@ -732,18 +768,17 @@ describe("ProviderModelPicker", () => {
             slug: "claude-opus-4-6",
             name: "Claude Opus 4.6",
             isCustom: false,
-            capabilities: {
-              reasoningEffortLevels: [
-                effort("low"),
-                effort("medium", true),
-                effort("high"),
-                effort("max"),
+            capabilities: createModelCapabilities({
+              optionDescriptors: [
+                selectDescriptor("effort", "Reasoning", [
+                  { id: "low", label: "low" },
+                  { id: "medium", label: "medium", isDefault: true },
+                  { id: "high", label: "high" },
+                  { id: "max", label: "max" },
+                ]),
+                booleanDescriptor("thinking", "Thinking"),
               ],
-              supportsFastMode: false,
-              supportsThinkingToggle: true,
-              contextWindowOptions: [],
-              promptInjectedEffortLevels: [],
-            },
+            }),
           },
         ],
       },
@@ -913,13 +948,16 @@ describe("ProviderModelPicker", () => {
           slug: "gpt-5.3-codex",
           name: "GPT-5.3 Codex",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-            supportsFastMode: true,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("reasoningEffort", "Reasoning", [
+                { id: "low", label: "low" },
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+              booleanDescriptor("fastMode", "Fast Mode"),
+            ],
+          }),
         },
       ]),
       TEST_PROVIDERS[1]!,
@@ -930,25 +968,31 @@ describe("ProviderModelPicker", () => {
           slug: "gpt-5.3-codex",
           name: "GPT-5.3 Codex",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-            supportsFastMode: true,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("reasoningEffort", "Reasoning", [
+                { id: "low", label: "low" },
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+              booleanDescriptor("fastMode", "Fast Mode"),
+            ],
+          }),
         },
         {
           slug: "gpt-5.3-codex-spark",
           name: "GPT-5.3 Codex Spark",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-            supportsFastMode: true,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("reasoningEffort", "Reasoning", [
+                { id: "low", label: "low" },
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+              booleanDescriptor("fastMode", "Fast Mode"),
+            ],
+          }),
         },
       ]),
       TEST_PROVIDERS[1]!,
