@@ -385,6 +385,30 @@ export function resolveCursorAcpBaseModelId(model: string | null | undefined): s
   return base.includes("[") ? base.slice(0, base.indexOf("[")) : base;
 }
 
+const CURSOR_CLI_LAUNCH_MODEL_ALIASES: Readonly<Record<string, string>> = {
+  // Cursor ACP currently advertises this stale id, while the CLI registry only accepts the
+  // preview-qualified id. Passing the CLI id at ACP launch makes ACP report the stale id as active.
+  "gpt-5.3-codex-spark": "gpt-5.3-codex-spark-preview",
+} as const;
+
+export function resolveCursorAcpLaunchModelOverride(
+  model: string | null | undefined,
+): string | undefined {
+  const baseModel = resolveCursorAcpBaseModelId(model);
+  return CURSOR_CLI_LAUNCH_MODEL_ALIASES[baseModel] ?? undefined;
+}
+
+export function isCursorAcpLaunchOnlyModel(model: string | null | undefined): boolean {
+  return resolveCursorAcpLaunchModelOverride(model) !== undefined;
+}
+
+export function readCursorAcpCurrentModelId(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+): string | undefined {
+  const modelOption = findCursorModelConfigOption(configOptions ?? []);
+  return modelOption?.type === "select" ? modelOption.currentValue?.trim() || undefined : undefined;
+}
+
 export function resolveCursorAcpConfigUpdates(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
   modelOptions: CursorModelOptions | null | undefined,

@@ -306,4 +306,43 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGenerationLive", (it) => {
       }),
     ),
   );
+
+  it.effect("runs YOLO reviews without bypassing Claude permissions", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            goalReached: false,
+            confidence: 70,
+            missing: ["Verification is missing"],
+            nextPrompt: "Run the verification and report the result.",
+            reviewNote: "More verification is needed.",
+          },
+        }),
+        argsMustContain: "--permission-mode plan --tools",
+        argsMustNotContain: "--dangerously-skip-permissions",
+        stdinMustContain: "You are T3 Code's YOLO reviewer agent.",
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generateYoloReview({
+          cwd: process.cwd(),
+          goal: "Finish the feature",
+          transcript: "User: Finish the feature.",
+          latestAssistantText: "Implemented the feature.",
+          checkpointSummary: "No checkpoint summary is available.",
+          iteration: 1,
+          maxIterations: 10,
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-sonnet-4-6",
+          },
+        });
+
+        expect(generated.goalReached).toBe(false);
+        expect(generated.nextPrompt).toBe("Run the verification and report the result.");
+      }),
+    ),
+  );
 });

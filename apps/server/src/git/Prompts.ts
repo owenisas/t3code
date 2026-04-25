@@ -200,3 +200,57 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+// ---------------------------------------------------------------------------
+// YOLO review
+// ---------------------------------------------------------------------------
+
+export interface YoloReviewPromptInput {
+  goal: string;
+  transcript: string;
+  latestAssistantText: string;
+  checkpointSummary: string;
+  iteration: number;
+  maxIterations: number;
+}
+
+export function buildYoloReviewPrompt(input: YoloReviewPromptInput) {
+  const prompt = [
+    "You are T3 Code's YOLO reviewer agent.",
+    "Your job is to judge whether the worker agent has fully reached the user's ultimate goal.",
+    "Return a JSON object with keys: goalReached, confidence, missing, nextPrompt, reviewNote.",
+    "Rules:",
+    "- Do not edit files, run commands, or ask the user questions.",
+    "- Use only the provided transcript, latest assistant response, and checkpoint summary.",
+    "- goalReached must be true only when the stated goal is substantially complete.",
+    "- confidence must be an integer from 0 to 100.",
+    "- missing must list concrete gaps, not vague advice.",
+    "- nextPrompt must be a direct instruction to the worker agent when goalReached is false.",
+    "- nextPrompt must be an empty string when goalReached is true.",
+    "- reviewNote must be a short visible note explaining your verdict.",
+    "",
+    `Iteration: ${input.iteration} of ${input.maxIterations}`,
+    "",
+    "Ultimate goal:",
+    limitSection(input.goal, 8_000),
+    "",
+    "Conversation transcript:",
+    limitSection(input.transcript, 40_000),
+    "",
+    "Latest assistant response:",
+    limitSection(input.latestAssistantText, 16_000),
+    "",
+    "Latest checkpoint summary:",
+    limitSection(input.checkpointSummary, 12_000),
+  ].join("\n");
+
+  const outputSchema = Schema.Struct({
+    goalReached: Schema.Boolean,
+    confidence: Schema.Number,
+    missing: Schema.Array(Schema.String),
+    nextPrompt: Schema.String,
+    reviewNote: Schema.String,
+  });
+
+  return { prompt, outputSchema };
+}

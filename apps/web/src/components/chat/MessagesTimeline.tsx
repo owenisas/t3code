@@ -323,8 +323,10 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
           const userImages = row.message.attachments ?? [];
           const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
           const terminalContexts = displayedUserMessage.contexts;
+          const isYoloReviewerMessage = row.message.origin === "yolo-reviewer";
           const canRevertAgentWork = typeof row.revertTurnCount === "number";
           const canForkFromMessage =
+            !isYoloReviewerMessage &&
             ctx.canForkUserMessages &&
             typeof ctx.onForkUserMessage === "function" &&
             (ctx.forkableUserMessageIds?.has(row.message.id) ?? true);
@@ -332,6 +334,11 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
           return (
             <div className="flex justify-end">
               <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
+                {isYoloReviewerMessage && (
+                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-500">
+                    YOLO reviewer
+                  </div>
+                )}
                 {userImages.length > 0 && (
                   <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
                     {userImages.map(

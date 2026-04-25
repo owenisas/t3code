@@ -84,6 +84,7 @@ interface FakeGitTextGeneration {
     message: string;
     modelSelection: ModelSelection;
   }) => Effect.Effect<{ title: string }, TextGenerationError>;
+  generateYoloReview: TextGenerationShape["generateYoloReview"];
 }
 
 type FakePullRequest = NonNullable<FakeGhScenario["pullRequest"]>;
@@ -292,6 +293,14 @@ function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): T
       Effect.succeed({
         title: "Update workflow",
       }),
+    generateYoloReview: () =>
+      Effect.succeed({
+        goalReached: true,
+        confidence: 100,
+        missing: [],
+        nextPrompt: "",
+        reviewNote: "Goal reached.",
+      }),
     ...overrides,
   };
 
@@ -335,6 +344,17 @@ function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): T
           (cause) =>
             new TextGenerationError({
               operation: "generateThreadTitle",
+              detail: "fake text generation failed",
+              ...(cause !== undefined ? { cause } : {}),
+            }),
+        ),
+      ),
+    generateYoloReview: (input) =>
+      implementation.generateYoloReview(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "generateYoloReview",
               detail: "fake text generation failed",
               ...(cause !== undefined ? { cause } : {}),
             }),

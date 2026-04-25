@@ -10,6 +10,8 @@ import {
   ScheduledJobId,
   ThreadId,
   TurnId,
+  YoloReviewId,
+  YoloRunId,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
@@ -146,6 +148,7 @@ function makeState(thread: Thread): AppState {
           ? { pendingSourceProposedPlan: thread.pendingSourceProposedPlan }
           : {}),
         queuedFollowUps: thread.queuedFollowUps,
+        yoloRun: thread.yoloRun ?? null,
       },
     },
     messageIdsByThreadId: {
@@ -685,6 +688,113 @@ describe("store shell snapshot sync", () => {
 });
 
 describe("incremental orchestration updates", () => {
+  it("preserves YOLO run state through incremental updates", () => {
+    const thread = makeThread();
+    const state = makeState(thread);
+    const runId = YoloRunId.make("yolo-run-1");
+    const reviewId = YoloReviewId.make("yolo-review-1");
+
+    const started = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.yolo-started", {
+        threadId: thread.id,
+        run: {
+          id: runId,
+          threadId: thread.id,
+          goal: "Finish the feature",
+          status: "active",
+          maxIterations: 10,
+          iteration: 0,
+          lastReview: null,
+          reviews: [],
+          lastError: null,
+          startedAt: "2026-02-27T00:00:00.000Z",
+          completedAt: null,
+          updatedAt: "2026-02-27T00:00:00.000Z",
+        },
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(started)[0]?.yoloRun?.status).toBe("active");
+
+    const reviewed = applyOrchestrationEvent(
+      started,
+      makeEvent("thread.yolo-review-completed", {
+        threadId: thread.id,
+        runId,
+        status: "active",
+        review: {
+          id: reviewId,
+          runId,
+          threadId: thread.id,
+          turnId: null,
+          iteration: 1,
+          outcome: "continue",
+          confidence: 75,
+          missing: ["one gap"],
+          nextPrompt: "Fix the gap",
+          reviewNote: "More work needed.",
+          error: null,
+          createdAt: "2026-02-27T00:00:10.000Z",
+        },
+        updatedAt: "2026-02-27T00:00:10.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(reviewed)[0]?.yoloRun?.iteration).toBe(1);
+    expect(threadsOf(reviewed)[0]?.yoloRun?.lastReview?.reviewNote).toBe("More work needed.");
+  });
+
+  it("updates and deletes queued follow-ups from thread events", () => {
+    const thread = makeThread({
+      queuedFollowUps: [
+        {
+          id: "follow-up-1",
+          messageId: MessageId.make("message-follow-up-1"),
+          text: "old queued text",
+          attachments: [],
+          modelSelection: null,
+          queuedAt: "2026-02-27T00:00:00.000Z",
+        },
+      ],
+    });
+    const state = makeState(thread);
+
+    const updated = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.follow-up-updated", {
+        threadId: thread.id,
+        followUp: {
+          id: "follow-up-1",
+          messageId: MessageId.make("message-follow-up-1"),
+          text: "edited queued text",
+          attachments: [],
+          modelSelection: null,
+          queuedAt: "2026-02-27T00:00:00.000Z",
+        },
+        updatedAt: "2026-02-27T00:00:10.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(updated)[0]?.queuedFollowUps).toHaveLength(1);
+    expect(threadsOf(updated)[0]?.queuedFollowUps[0]?.text).toBe("edited queued text");
+
+    const deleted = applyOrchestrationEvent(
+      updated,
+      makeEvent("thread.follow-up-deleted", {
+        threadId: thread.id,
+        followUpId: "follow-up-1",
+        deletedAt: "2026-02-27T00:00:20.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(deleted)[0]?.queuedFollowUps).toEqual([]);
+  });
+
   it("does not mark bootstrap complete for incremental events", () => {
     const state = withActiveEnvironmentState(localEnvironmentStateOf(makeState(makeThread())), {
       bootstrapComplete: false,

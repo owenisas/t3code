@@ -8,6 +8,8 @@ describe("ComposerQueuedFollowUps", () => {
   it("renders queued follow-ups above the composer with text, attachment, and model metadata", () => {
     const markup = renderToStaticMarkup(
       <ComposerQueuedFollowUps
+        onEdit={() => undefined}
+        onDelete={() => undefined}
         followUps={[
           {
             id: "follow-up-1",
@@ -28,6 +30,7 @@ describe("ComposerQueuedFollowUps", () => {
                 mimeType: "image/png",
                 name: "bug.png",
                 sizeBytes: 1024,
+                previewUrl: "http://localhost/attachments/attachment-1",
               },
             ],
             modelSelection: {
@@ -44,6 +47,10 @@ describe("ComposerQueuedFollowUps", () => {
     expect(markup).toContain("Queued Follow-Ups");
     expect(markup).toContain("Please also update the error state copy in the empty view.");
     expect(markup).toContain("1 attachment");
+    expect(markup).toContain("Edit");
+    expect(markup).toContain("Delete");
+    expect(markup).toContain('src="http://localhost/attachments/attachment-1"');
+    expect(markup).toContain('alt="bug.png"');
     expect(markup).toContain("Claude sonnet");
   });
 });

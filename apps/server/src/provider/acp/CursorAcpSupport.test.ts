@@ -74,6 +74,23 @@ describe("buildCursorAcpSpawnInput", () => {
       cwd: "/tmp/project",
     });
   });
+
+  it("passes a Cursor CLI launch model override before acp", () => {
+    expect(
+      buildCursorAcpSpawnInput(
+        {
+          binaryPath: "/usr/local/bin/agent",
+          apiEndpoint: "http://localhost:3000",
+        },
+        "/tmp/project",
+        "gpt-5.3-codex-spark-preview",
+      ),
+    ).toEqual({
+      command: "/usr/local/bin/agent",
+      args: ["-e", "http://localhost:3000", "--model", "gpt-5.3-codex-spark-preview", "acp"],
+      cwd: "/tmp/project",
+    });
+  });
 });
 
 describe("applyCursorAcpModelSelection", () => {
@@ -119,5 +136,72 @@ describe("applyCursorAcpModelSelection", () => {
       { type: "config", configId: "context", value: "1m" },
       { type: "config", configId: "fast", value: "true" },
     ]);
+  });
+
+  it("allows launch-only Cursor aliases when ACP already reports the alias as current", async () => {
+    const calls: Array<{ readonly type: "model"; readonly value: string }> = [];
+
+    const runtime = {
+      getConfigOptions: Effect.succeed([
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "gpt-5.3-codex-spark",
+          options: [
+            { value: "composer-2", name: "Composer 2" },
+            { value: "gpt-5.3-codex-spark", name: "Codex 5.3 Spark" },
+          ],
+        },
+      ] satisfies ReadonlyArray<EffectAcpSchema.SessionConfigOption>),
+      setModel: (value: string) =>
+        Effect.sync(() => {
+          calls.push({ type: "model", value });
+        }),
+      setConfigOption: () => Effect.void,
+    };
+
+    await Effect.runPromise(
+      applyCursorAcpModelSelection({
+        runtime,
+        model: "gpt-5.3-codex-spark",
+        modelOptions: undefined,
+        mapError: ({ step, cause }) => new Error(`${step}: ${cause.message}`),
+      }),
+    );
+
+    expect(calls).toEqual([{ type: "model", value: "gpt-5.3-codex-spark" }]);
+  });
+
+  it("rejects switching to launch-only Cursor aliases in an existing ACP session", async () => {
+    const runtime = {
+      getConfigOptions: Effect.succeed([
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "composer-2",
+          options: [
+            { value: "composer-2", name: "Composer 2" },
+            { value: "gpt-5.3-codex-spark", name: "Codex 5.3 Spark" },
+          ],
+        },
+      ] satisfies ReadonlyArray<EffectAcpSchema.SessionConfigOption>),
+      setModel: () => Effect.void,
+      setConfigOption: () => Effect.void,
+    };
+
+    await expect(
+      Effect.runPromise(
+        applyCursorAcpModelSelection({
+          runtime,
+          model: "gpt-5.3-codex-spark",
+          modelOptions: undefined,
+          mapError: ({ step, cause }) => new Error(`${step}: ${cause.message}`),
+        }),
+      ),
+    ).rejects.toThrow("must be selected when the ACP process starts");
   });
 });

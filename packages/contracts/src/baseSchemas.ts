@@ -34,6 +34,10 @@ export const ScheduledJobId = makeEntityId("ScheduledJobId");
 export type ScheduledJobId = typeof ScheduledJobId.Type;
 export const ScheduledJobRunId = makeEntityId("ScheduledJobRunId");
 export type ScheduledJobRunId = typeof ScheduledJobRunId.Type;
+export const YoloRunId = makeEntityId("YoloRunId");
+export type YoloRunId = typeof YoloRunId.Type;
+export const YoloReviewId = makeEntityId("YoloReviewId");
+export type YoloReviewId = typeof YoloReviewId.Type;
 export const AuthSessionId = makeEntityId("AuthSessionId");
 export type AuthSessionId = typeof AuthSessionId.Type;
 

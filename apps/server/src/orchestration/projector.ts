@@ -30,7 +30,9 @@ import {
   ThreadCreatedPayload,
   ThreadDeletedPayload,
   ThreadForkContextHydratedPayload,
+  ThreadFollowUpDeletedPayload,
   ThreadFollowUpQueuedPayload,
+  ThreadFollowUpUpdatedPayload,
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
@@ -39,6 +41,9 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadYoloReviewCompletedPayload,
+  ThreadYoloStartedPayload,
+  ThreadYoloStoppedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -437,6 +442,7 @@ export function projectEvent(
             worktreePath: payload.worktreePath,
             latestTurn: null,
             queuedFollowUps: [],
+            yoloRun: null,
             forkOrigin: payload.forkOrigin ?? null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -576,6 +582,7 @@ export function projectEvent(
             role: payload.role,
             text: payload.text,
             ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
+            origin: payload.origin ?? "human",
             turnId: payload.turnId,
             streaming: payload.streaming,
             createdAt: payload.createdAt,
@@ -645,6 +652,59 @@ export function projectEvent(
         }),
       );
 
+    case "thread.follow-up-updated":
+      return decodeForEvent(
+        ThreadFollowUpUpdatedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          const queuedFollowUps = [
+            ...thread.queuedFollowUps.filter((entry) => entry.id !== payload.followUp.id),
+            payload.followUp,
+          ].toSorted(
+            (left, right) =>
+              left.queuedAt.localeCompare(right.queuedAt) || left.id.localeCompare(right.id),
+          );
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              queuedFollowUps,
+              updatedAt: payload.updatedAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.follow-up-deleted":
+      return decodeForEvent(
+        ThreadFollowUpDeletedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              queuedFollowUps: thread.queuedFollowUps.filter(
+                (entry) => entry.id !== payload.followUpId,
+              ),
+              updatedAt: payload.deletedAt,
+            }),
+          };
+        }),
+      );
+
     case "thread.session-set":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
@@ -693,6 +753,76 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.yolo-started":
+      return decodeForEvent(ThreadYoloStartedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            yoloRun: payload.run,
+            updatedAt: payload.run.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.yolo-stopped":
+      return decodeForEvent(ThreadYoloStoppedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            yoloRun: (() => {
+              const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+              const run = thread?.yoloRun;
+              return run && run.id === payload.runId
+                ? {
+                    ...run,
+                    status: "stopped",
+                    lastError: payload.reason,
+                    completedAt: payload.stoppedAt,
+                    updatedAt: payload.updatedAt,
+                  }
+                : (run ?? null);
+            })(),
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.yolo-review-completed":
+      return decodeForEvent(
+        ThreadYoloReviewCompletedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            yoloRun: (() => {
+              const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+              const run = thread?.yoloRun;
+              if (!run || run.id !== payload.runId) {
+                return run ?? null;
+              }
+              const reviews = [
+                payload.review,
+                ...run.reviews.filter((review) => review.id !== payload.review.id),
+              ].slice(0, 20);
+              return {
+                ...run,
+                status: payload.status,
+                iteration: Math.max(run.iteration, payload.review.iteration),
+                lastReview: payload.review,
+                reviews,
+                lastError: payload.review.error,
+                completedAt: payload.status === "active" ? null : payload.updatedAt,
+                updatedAt: payload.updatedAt,
+              };
+            })(),
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
 
     case "thread.proposed-plan-upserted":
       return Effect.gen(function* () {

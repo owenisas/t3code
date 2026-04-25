@@ -22,6 +22,8 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
   TurnId,
+  YoloReviewId,
+  YoloRunId,
 } from "./baseSchemas.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
@@ -250,12 +252,15 @@ export type OrchestrationProject = typeof OrchestrationProject.Type;
 
 export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
 export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
+export const OrchestrationMessageOrigin = Schema.Literals(["human", "yolo-reviewer"]);
+export type OrchestrationMessageOrigin = typeof OrchestrationMessageOrigin.Type;
 
 export const OrchestrationMessage = Schema.Struct({
   id: MessageId,
   role: OrchestrationMessageRole,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  origin: Schema.optional(OrchestrationMessageOrigin),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
@@ -379,6 +384,43 @@ export const OrchestrationQueuedFollowUp = Schema.Struct({
 });
 export type OrchestrationQueuedFollowUp = typeof OrchestrationQueuedFollowUp.Type;
 
+export const YoloRunStatus = Schema.Literals(["active", "completed", "stopped", "failed"]);
+export type YoloRunStatus = typeof YoloRunStatus.Type;
+export const YoloReviewOutcome = Schema.Literals(["complete", "continue", "failed"]);
+export type YoloReviewOutcome = typeof YoloReviewOutcome.Type;
+
+export const YoloReview = Schema.Struct({
+  id: YoloReviewId,
+  runId: YoloRunId,
+  threadId: ThreadId,
+  turnId: Schema.NullOr(TurnId),
+  iteration: PositiveInt,
+  outcome: YoloReviewOutcome,
+  confidence: NonNegativeInt,
+  missing: Schema.Array(Schema.String),
+  nextPrompt: Schema.NullOr(Schema.String),
+  reviewNote: Schema.String,
+  error: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  createdAt: IsoDateTime,
+});
+export type YoloReview = typeof YoloReview.Type;
+
+export const YoloRun = Schema.Struct({
+  id: YoloRunId,
+  threadId: ThreadId,
+  goal: TrimmedNonEmptyString,
+  status: YoloRunStatus,
+  maxIterations: PositiveInt.check(Schema.isLessThanOrEqualTo(50)),
+  iteration: NonNegativeInt,
+  lastReview: Schema.NullOr(YoloReview).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  reviews: Schema.Array(YoloReview).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  lastError: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  startedAt: IsoDateTime,
+  completedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  updatedAt: IsoDateTime,
+});
+export type YoloRun = typeof YoloRun.Type;
+
 export const OrchestrationThreadForkOrigin = Schema.Struct({
   sourceThreadId: ThreadId,
   sourceMessageId: MessageId,
@@ -401,6 +443,7 @@ export const OrchestrationThread = Schema.Struct({
   queuedFollowUps: Schema.Array(OrchestrationQueuedFollowUp).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  yoloRun: Schema.optional(Schema.NullOr(YoloRun)),
   forkOrigin: Schema.optional(
     Schema.NullOr(OrchestrationThreadForkOrigin).pipe(
       Schema.withDecodingDefault(Effect.succeed(null)),
@@ -720,6 +763,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
     role: Schema.Literal("user"),
     text: Schema.String,
     attachments: Schema.Array(ChatAttachment),
+    origin: Schema.optional(OrchestrationMessageOrigin),
   }),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
@@ -741,6 +785,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
     role: Schema.Literal("user"),
     text: Schema.String,
     attachments: Schema.Array(UploadChatAttachment),
+    origin: Schema.optional(OrchestrationMessageOrigin),
   }),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
@@ -760,6 +805,7 @@ const ThreadTurnSteerCommand = Schema.Struct({
     role: Schema.Literal("user"),
     text: Schema.String,
     attachments: Schema.Array(ChatAttachment),
+    origin: Schema.optional(OrchestrationMessageOrigin),
   }),
   modelSelection: Schema.optional(ModelSelection),
   createdAt: IsoDateTime,
@@ -774,6 +820,7 @@ const ClientThreadTurnSteerCommand = Schema.Struct({
     role: Schema.Literal("user"),
     text: Schema.String,
     attachments: Schema.Array(UploadChatAttachment),
+    origin: Schema.optional(OrchestrationMessageOrigin),
   }),
   modelSelection: Schema.optional(ModelSelection),
   createdAt: IsoDateTime,
@@ -789,6 +836,7 @@ const ThreadFollowUpQueueCommand = Schema.Struct({
     role: Schema.Literal("user"),
     text: Schema.String,
     attachments: Schema.Array(ChatAttachment),
+    origin: Schema.optional(OrchestrationMessageOrigin),
   }),
   modelSelection: Schema.optional(ModelSelection),
   createdAt: IsoDateTime,
@@ -804,9 +852,27 @@ const ClientThreadFollowUpQueueCommand = Schema.Struct({
     role: Schema.Literal("user"),
     text: Schema.String,
     attachments: Schema.Array(UploadChatAttachment),
+    origin: Schema.optional(OrchestrationMessageOrigin),
   }),
   modelSelection: Schema.optional(ModelSelection),
   createdAt: IsoDateTime,
+});
+
+const ThreadFollowUpUpdateCommand = Schema.Struct({
+  type: Schema.Literal("thread.follow-up.update"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  followUpId: TrimmedNonEmptyString,
+  text: Schema.String,
+  updatedAt: IsoDateTime,
+});
+
+const ThreadFollowUpDeleteCommand = Schema.Struct({
+  type: Schema.Literal("thread.follow-up.delete"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  followUpId: TrimmedNonEmptyString,
+  deletedAt: IsoDateTime,
 });
 
 const ThreadTurnInterruptCommand = Schema.Struct({
@@ -850,6 +916,27 @@ const ThreadSessionStopCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadYoloStartCommand = Schema.Struct({
+  type: Schema.Literal("thread.yolo.start"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  runId: YoloRunId,
+  goal: TrimmedNonEmptyString,
+  maxIterations: PositiveInt.check(Schema.isLessThanOrEqualTo(50)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(10)),
+  ),
+  createdAt: IsoDateTime,
+});
+
+const ThreadYoloStopCommand = Schema.Struct({
+  type: Schema.Literal("thread.yolo.stop"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  runId: Schema.optional(YoloRunId),
+  reason: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
+});
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -871,11 +958,15 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadTurnStartCommand,
   ThreadTurnSteerCommand,
   ThreadFollowUpQueueCommand,
+  ThreadFollowUpUpdateCommand,
+  ThreadFollowUpDeleteCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  ThreadYoloStartCommand,
+  ThreadYoloStopCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -901,11 +992,15 @@ export const ClientOrchestrationCommand = Schema.Union([
   ClientThreadTurnStartCommand,
   ClientThreadTurnSteerCommand,
   ClientThreadFollowUpQueueCommand,
+  ThreadFollowUpUpdateCommand,
+  ThreadFollowUpDeleteCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  ThreadYoloStartCommand,
+  ThreadYoloStopCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -991,6 +1086,15 @@ const ScheduledJobRunCompleteCommand = Schema.Struct({
   completedAt: IsoDateTime,
 });
 
+const ThreadYoloReviewCompleteCommand = Schema.Struct({
+  type: Schema.Literal("thread.yolo.review.complete"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  review: YoloReview,
+  completedStatus: Schema.optional(YoloRunStatus),
+  updatedAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -1001,6 +1105,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadForkContextHydrateCommand,
   ThreadRevertCompleteCommand,
   ScheduledJobRunCompleteCommand,
+  ThreadYoloReviewCompleteCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1034,11 +1139,16 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.turn-steer-requested",
   "thread.turn-interrupt-requested",
   "thread.follow-up-queued",
+  "thread.follow-up-updated",
+  "thread.follow-up-deleted",
   "thread.approval-response-requested",
   "thread.user-input-response-requested",
   "thread.checkpoint-revert-requested",
   "thread.reverted",
   "thread.session-stop-requested",
+  "thread.yolo-started",
+  "thread.yolo-stopped",
+  "thread.yolo-review-completed",
   "thread.session-set",
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
@@ -1195,6 +1305,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
   role: OrchestrationMessageRole,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  origin: Schema.optional(OrchestrationMessageOrigin),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
@@ -1233,6 +1344,18 @@ export const ThreadFollowUpQueuedPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
+export const ThreadFollowUpUpdatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  followUp: OrchestrationQueuedFollowUp,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadFollowUpDeletedPayload = Schema.Struct({
+  threadId: ThreadId,
+  followUpId: TrimmedNonEmptyString,
+  deletedAt: IsoDateTime,
+});
+
 export const ThreadApprovalResponseRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   requestId: ApprovalRequestId,
@@ -1261,6 +1384,27 @@ export const ThreadRevertedPayload = Schema.Struct({
 export const ThreadSessionStopRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   createdAt: IsoDateTime,
+});
+
+export const ThreadYoloStartedPayload = Schema.Struct({
+  threadId: ThreadId,
+  run: YoloRun,
+});
+
+export const ThreadYoloStoppedPayload = Schema.Struct({
+  threadId: ThreadId,
+  runId: YoloRunId,
+  reason: Schema.NullOr(Schema.String),
+  stoppedAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadYoloReviewCompletedPayload = Schema.Struct({
+  threadId: ThreadId,
+  runId: YoloRunId,
+  review: YoloReview,
+  status: YoloRunStatus,
+  updatedAt: IsoDateTime,
 });
 
 export const ThreadSessionSetPayload = Schema.Struct({
@@ -1428,6 +1572,16 @@ export const OrchestrationEvent = Schema.Union([
   }),
   Schema.Struct({
     ...EventBaseFields,
+    type: Schema.Literal("thread.follow-up-updated"),
+    payload: ThreadFollowUpUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.follow-up-deleted"),
+    payload: ThreadFollowUpDeletedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
     type: Schema.Literal("thread.approval-response-requested"),
     payload: ThreadApprovalResponseRequestedPayload,
   }),
@@ -1450,6 +1604,21 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.session-stop-requested"),
     payload: ThreadSessionStopRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.yolo-started"),
+    payload: ThreadYoloStartedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.yolo-stopped"),
+    payload: ThreadYoloStoppedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.yolo-review-completed"),
+    payload: ThreadYoloReviewCompletedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

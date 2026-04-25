@@ -71,20 +71,30 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
     type:
       | "thread.message-sent"
       | "thread.follow-up-queued"
+      | "thread.follow-up-updated"
+      | "thread.follow-up-deleted"
       | "thread.proposed-plan-upserted"
       | "thread.activity-appended"
       | "thread.turn-diff-completed"
       | "thread.reverted"
+      | "thread.yolo-started"
+      | "thread.yolo-stopped"
+      | "thread.yolo-review-completed"
       | "thread.session-set";
   }
 > {
   return (
     event.type === "thread.message-sent" ||
     event.type === "thread.follow-up-queued" ||
+    event.type === "thread.follow-up-updated" ||
+    event.type === "thread.follow-up-deleted" ||
     event.type === "thread.proposed-plan-upserted" ||
     event.type === "thread.activity-appended" ||
     event.type === "thread.turn-diff-completed" ||
     event.type === "thread.reverted" ||
+    event.type === "thread.yolo-started" ||
+    event.type === "thread.yolo-stopped" ||
+    event.type === "thread.yolo-review-completed" ||
     event.type === "thread.session-set"
   );
 }

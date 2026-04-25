@@ -134,6 +134,7 @@ export function getThreadFromEnvironmentState(
     latestTurn: turnState?.latestTurn ?? null,
     pendingSourceProposedPlan: turnState?.pendingSourceProposedPlan,
     queuedFollowUps: turnState?.queuedFollowUps ?? EMPTY_QUEUED_FOLLOW_UPS,
+    yoloRun: turnState?.yoloRun ?? null,
     messages,
     activities,
     proposedPlans,

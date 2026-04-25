@@ -14,6 +14,7 @@ import {
   type BranchNameGenerationInput,
   type ThreadTitleGenerationResult,
   type TextGenerationShape,
+  type YoloReviewGenerationResult,
   TextGeneration,
 } from "../Services/TextGeneration.ts";
 import {
@@ -21,6 +22,7 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildYoloReviewPrompt,
 } from "../Prompts.ts";
 import {
   normalizeCliError,
@@ -89,7 +91,8 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateYoloReview",
     attachments: BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
@@ -133,7 +136,8 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateYoloReview";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -403,11 +407,41 @@ const makeCodexTextGeneration = Effect.gen(function* () {
     } satisfies ThreadTitleGenerationResult;
   });
 
+  const generateYoloReview: TextGenerationShape["generateYoloReview"] = Effect.fn(
+    "CodexTextGeneration.generateYoloReview",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildYoloReviewPrompt(input);
+
+    if (input.modelSelection.provider !== "codex") {
+      return yield* new TextGenerationError({
+        operation: "generateYoloReview",
+        detail: "Invalid model selection.",
+      });
+    }
+
+    const generated = yield* runCodexJson({
+      operation: "generateYoloReview",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return {
+      goalReached: generated.goalReached,
+      confidence: Math.max(0, Math.min(100, Math.round(generated.confidence))),
+      missing: generated.missing.map((entry) => entry.trim()).filter(Boolean),
+      nextPrompt: generated.nextPrompt.trim(),
+      reviewNote: generated.reviewNote.trim(),
+    } satisfies YoloReviewGenerationResult;
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateYoloReview,
   } satisfies TextGenerationShape;
 });
 

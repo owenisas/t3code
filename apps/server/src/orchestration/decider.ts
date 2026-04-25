@@ -444,6 +444,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           role: "user",
           text: job.prompt,
           attachments: [],
+          origin: "human",
           turnId: null,
           streaming: false,
           createdAt: command.createdAt,
@@ -608,6 +609,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             role: message.role,
             text: message.text,
             ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+            origin: message.origin,
             turnId: null,
             streaming: false,
             createdAt: message.createdAt,
@@ -803,6 +805,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           role: "user",
           text: command.message.text,
           attachments: command.message.attachments,
+          origin: command.message.origin ?? "human",
           turnId: null,
           streaming: false,
           createdAt: command.createdAt,
@@ -860,6 +863,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           role: "user",
           text: command.message.text,
           attachments: command.message.attachments,
+          origin: command.message.origin ?? "human",
           turnId: null,
           streaming: false,
           createdAt: command.createdAt,
@@ -918,6 +922,71 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             queuedAt: command.createdAt,
           },
           updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.follow-up.update": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const existingFollowUp = thread.queuedFollowUps.find(
+        (followUp) => followUp.id === command.followUpId,
+      );
+      if (!existingFollowUp) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued follow-up '${command.followUpId}' does not exist on thread '${command.threadId}'.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.updatedAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.follow-up-updated",
+        payload: {
+          threadId: command.threadId,
+          followUp: {
+            ...existingFollowUp,
+            text: command.text,
+          },
+          updatedAt: command.updatedAt,
+        },
+      };
+    }
+
+    case "thread.follow-up.delete": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const existingFollowUp = thread.queuedFollowUps.find(
+        (followUp) => followUp.id === command.followUpId,
+      );
+      if (!existingFollowUp) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued follow-up '${command.followUpId}' does not exist on thread '${command.threadId}'.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.deletedAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.follow-up-deleted",
+        payload: {
+          threadId: command.threadId,
+          followUpId: command.followUpId,
+          deletedAt: command.deletedAt,
         },
       };
     }
@@ -1039,6 +1108,83 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.yolo.start": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.yoloRun?.status === "active") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' already has an active YOLO run.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.yolo-started",
+        payload: {
+          threadId: command.threadId,
+          run: {
+            id: command.runId,
+            threadId: command.threadId,
+            goal: command.goal,
+            status: "active",
+            maxIterations: command.maxIterations,
+            iteration: 0,
+            lastReview: null,
+            reviews: [],
+            lastError: null,
+            startedAt: command.createdAt,
+            completedAt: null,
+            updatedAt: command.createdAt,
+          },
+        },
+      };
+    }
+
+    case "thread.yolo.stop": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const activeRun = thread.yoloRun?.status === "active" ? thread.yoloRun : null;
+      if (!activeRun) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' does not have an active YOLO run.`,
+        });
+      }
+      if (command.runId !== undefined && activeRun.id !== command.runId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `YOLO run '${command.runId}' is not active on thread '${command.threadId}'.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.yolo-stopped",
+        payload: {
+          threadId: command.threadId,
+          runId: activeRun.id,
+          reason: command.reason ?? null,
+          stoppedAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
     case "thread.session.set": {
       yield* requireThread({
         readModel,
@@ -1057,6 +1203,38 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           session: command.session,
+        },
+      };
+    }
+
+    case "thread.yolo.review.complete": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const activeRun = thread.yoloRun?.status === "active" ? thread.yoloRun : null;
+      if (!activeRun || activeRun.id !== command.review.runId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `YOLO run '${command.review.runId}' is not active on thread '${command.threadId}'.`,
+        });
+      }
+      const status = command.completedStatus ?? activeRun.status;
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.updatedAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.yolo-review-completed",
+        payload: {
+          threadId: command.threadId,
+          runId: activeRun.id,
+          review: command.review,
+          status,
+          updatedAt: command.updatedAt,
         },
       };
     }

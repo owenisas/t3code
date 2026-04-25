@@ -21,6 +21,7 @@ import type {
   ScheduledJobRunTrigger,
   ScheduledJobSchedule,
   ScheduledJobStatus,
+  YoloRun,
 } from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -53,6 +54,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   text: string;
   attachments?: ChatAttachment[];
+  origin?: "human" | "yolo-reviewer";
   turnId?: TurnId | null;
   createdAt: string;
   completedAt?: string | undefined;
@@ -160,6 +162,7 @@ export interface Thread {
   latestTurn: OrchestrationLatestTurn | null;
   pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
   queuedFollowUps: QueuedThreadFollowUp[];
+  yoloRun?: YoloRun | null;
   branch: string | null;
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
@@ -187,6 +190,7 @@ export interface ThreadTurnState {
   latestTurn: OrchestrationLatestTurn | null;
   pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
   queuedFollowUps: QueuedThreadFollowUp[];
+  yoloRun?: YoloRun | null;
 }
 
 export interface SidebarThreadSummary {

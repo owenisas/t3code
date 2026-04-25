@@ -8,6 +8,7 @@ import { TextGenerationError } from "@t3tools/contracts";
 import {
   type ThreadTitleGenerationResult,
   type TextGenerationShape,
+  type YoloReviewGenerationResult,
   TextGeneration,
 } from "../Services/TextGeneration.ts";
 import {
@@ -15,6 +16,7 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildYoloReviewPrompt,
 } from "../Prompts.ts";
 import {
   extractJsonObject,
@@ -35,7 +37,8 @@ function mapCursorAcpError(
     | "generateCommitMessage"
     | "generatePrContent"
     | "generateBranchName"
-    | "generateThreadTitle",
+    | "generateThreadTitle"
+    | "generateYoloReview",
   detail: string,
   cause: unknown,
 ): TextGenerationError {
@@ -70,7 +73,8 @@ const makeCursorTextGeneration = Effect.gen(function* () {
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateYoloReview";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -298,11 +302,41 @@ const makeCursorTextGeneration = Effect.gen(function* () {
     } satisfies ThreadTitleGenerationResult;
   });
 
+  const generateYoloReview: TextGenerationShape["generateYoloReview"] = Effect.fn(
+    "CursorTextGeneration.generateYoloReview",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildYoloReviewPrompt(input);
+
+    if (input.modelSelection.provider !== "cursor") {
+      return yield* new TextGenerationError({
+        operation: "generateYoloReview",
+        detail: "Invalid model selection.",
+      });
+    }
+
+    const generated = yield* runCursorJson({
+      operation: "generateYoloReview",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return {
+      goalReached: generated.goalReached,
+      confidence: Math.max(0, Math.min(100, Math.round(generated.confidence))),
+      missing: generated.missing.map((entry) => entry.trim()).filter(Boolean),
+      nextPrompt: generated.nextPrompt.trim(),
+      reviewNote: generated.reviewNote.trim(),
+    } satisfies YoloReviewGenerationResult;
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateYoloReview,
   } satisfies TextGenerationShape;
 });
 

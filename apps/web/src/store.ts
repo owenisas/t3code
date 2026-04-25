@@ -26,6 +26,7 @@ import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
 import {
   type ChatMessage,
+  type ChatAttachment,
   type Project,
   type QueuedThreadFollowUp,
   type ScheduledJobRecord,
@@ -162,8 +163,11 @@ function mapSession(session: OrchestrationSession): ThreadSession {
   };
 }
 
-function mapMessage(environmentId: EnvironmentId, message: OrchestrationMessage): ChatMessage {
-  const attachments = message.attachments?.map((attachment) => ({
+function mapChatAttachment(
+  environmentId: EnvironmentId,
+  attachment: ChatAttachment,
+): ChatAttachment {
+  return {
     type: "image" as const,
     id: attachment.id,
     name: attachment.name,
@@ -173,12 +177,19 @@ function mapMessage(environmentId: EnvironmentId, message: OrchestrationMessage)
       environmentId,
       pathname: attachmentPreviewRoutePath(attachment.id),
     }),
-  }));
+  };
+}
+
+function mapMessage(environmentId: EnvironmentId, message: OrchestrationMessage): ChatMessage {
+  const attachments = message.attachments?.map((attachment) =>
+    mapChatAttachment(environmentId, attachment),
+  );
 
   return {
     id: message.id,
     role: message.role,
     text: message.text,
+    origin: message.origin ?? "human",
     turnId: message.turnId,
     createdAt: message.createdAt,
     streaming: message.streaming,
@@ -248,13 +259,16 @@ function mapScheduledJobRun(
 }
 
 function mapQueuedFollowUp(
+  environmentId: EnvironmentId,
   followUp: OrchestrationReadModel["threads"][number]["queuedFollowUps"][number],
 ): QueuedThreadFollowUp {
   return {
     id: followUp.id,
     messageId: followUp.messageId,
     text: followUp.text,
-    attachments: followUp.attachments.map((attachment) => ({ ...attachment })),
+    attachments: followUp.attachments.map((attachment) =>
+      mapChatAttachment(environmentId, attachment),
+    ),
     modelSelection: followUp.modelSelection
       ? normalizeModelSelection(followUp.modelSelection)
       : null,
@@ -309,7 +323,10 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
-    queuedFollowUps: thread.queuedFollowUps.map(mapQueuedFollowUp),
+    queuedFollowUps: thread.queuedFollowUps.map((followUp) =>
+      mapQueuedFollowUp(environmentId, followUp),
+    ),
+    yoloRun: thread.yoloRun ?? null,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
@@ -347,6 +364,7 @@ function mapThreadShell(
     latestTurn: thread.latestTurn,
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
     queuedFollowUps: [],
+    yoloRun: null,
   };
   const summary: SidebarThreadSummary = {
     id: thread.id,
@@ -400,6 +418,7 @@ function toThreadTurnState(thread: Thread): ThreadTurnState {
       ? { pendingSourceProposedPlan: thread.pendingSourceProposedPlan }
       : {}),
     queuedFollowUps: thread.queuedFollowUps,
+    yoloRun: thread.yoloRun ?? null,
   };
 }
 
@@ -515,7 +534,8 @@ function threadTurnStatesEqual(left: ThreadTurnState | undefined, right: ThreadT
     left !== undefined &&
     latestTurnsEqual(left.latestTurn, right.latestTurn) &&
     sourceProposedPlansEqual(left.pendingSourceProposedPlan, right.pendingSourceProposedPlan) &&
-    queuedFollowUpsEqual(left.queuedFollowUps, right.queuedFollowUps)
+    queuedFollowUpsEqual(left.queuedFollowUps, right.queuedFollowUps) &&
+    left.yoloRun === right.yoloRun
   );
 }
 
@@ -1510,6 +1530,7 @@ function applyEnvironmentOrchestrationEvent(
           worktreePath: event.payload.worktreePath,
           latestTurn: null,
           queuedFollowUps: [],
+          yoloRun: null,
           forkOrigin: event.payload.forkOrigin ?? null,
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
@@ -1597,12 +1618,34 @@ function applyEnvironmentOrchestrationEvent(
         ...thread,
         queuedFollowUps: [
           ...thread.queuedFollowUps.filter((followUp) => followUp.id !== event.payload.followUp.id),
-          mapQueuedFollowUp(event.payload.followUp),
+          mapQueuedFollowUp(thread.environmentId, event.payload.followUp),
         ].toSorted(
           (left, right) =>
             left.queuedAt.localeCompare(right.queuedAt) || left.id.localeCompare(right.id),
         ),
         updatedAt: event.payload.updatedAt,
+      }));
+
+    case "thread.follow-up-updated":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        queuedFollowUps: [
+          ...thread.queuedFollowUps.filter((followUp) => followUp.id !== event.payload.followUp.id),
+          mapQueuedFollowUp(thread.environmentId, event.payload.followUp),
+        ].toSorted(
+          (left, right) =>
+            left.queuedAt.localeCompare(right.queuedAt) || left.id.localeCompare(right.id),
+        ),
+        updatedAt: event.payload.updatedAt,
+      }));
+
+    case "thread.follow-up-deleted":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        queuedFollowUps: thread.queuedFollowUps.filter(
+          (followUp) => followUp.id !== event.payload.followUpId,
+        ),
+        updatedAt: event.payload.deletedAt,
       }));
 
     case "thread.turn-interrupt-requested": {
@@ -1639,6 +1682,7 @@ function applyEnvironmentOrchestrationEvent(
           ...(event.payload.attachments !== undefined
             ? { attachments: event.payload.attachments }
             : {}),
+          origin: event.payload.origin ?? "human",
           turnId: event.payload.turnId,
           streaming: event.payload.streaming,
           createdAt: event.payload.createdAt,
@@ -1769,6 +1813,53 @@ function applyEnvironmentOrchestrationEvent(
               updatedAt: event.occurredAt,
             },
       );
+
+    case "thread.yolo-started":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        yoloRun: event.payload.run,
+        updatedAt: event.payload.run.updatedAt,
+      }));
+
+    case "thread.yolo-stopped":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        yoloRun:
+          thread.yoloRun && thread.yoloRun.id === event.payload.runId
+            ? {
+                ...thread.yoloRun,
+                status: "stopped",
+                lastError: event.payload.reason ?? null,
+                completedAt: event.payload.stoppedAt,
+                updatedAt: event.payload.updatedAt,
+              }
+            : (thread.yoloRun ?? null),
+        updatedAt: event.payload.updatedAt,
+      }));
+
+    case "thread.yolo-review-completed":
+      return updateThreadState(state, event.payload.threadId, (thread) => {
+        if (!thread.yoloRun || thread.yoloRun.id !== event.payload.runId) {
+          return thread;
+        }
+        return {
+          ...thread,
+          yoloRun: {
+            ...thread.yoloRun,
+            status: event.payload.status,
+            iteration: Math.max(thread.yoloRun.iteration, event.payload.review.iteration),
+            lastReview: event.payload.review,
+            reviews: [
+              event.payload.review,
+              ...thread.yoloRun.reviews.filter((review) => review.id !== event.payload.review.id),
+            ].slice(0, 20),
+            lastError: event.payload.review.error,
+            completedAt: event.payload.status === "active" ? null : event.payload.updatedAt,
+            updatedAt: event.payload.updatedAt,
+          },
+          updatedAt: event.payload.updatedAt,
+        };
+      });
 
     case "thread.proposed-plan-upserted":
       return updateThreadState(state, event.payload.threadId, (thread) => {

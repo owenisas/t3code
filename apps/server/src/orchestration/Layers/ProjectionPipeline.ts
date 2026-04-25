@@ -789,6 +789,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             forkSourceThreadId: event.payload.forkOrigin?.sourceThreadId ?? null,
             forkSourceMessageId: event.payload.forkOrigin?.sourceMessageId ?? null,
             forkContextHydratedAt: event.payload.forkOrigin?.hydratedAt ?? null,
+            yoloRun: null,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -916,6 +917,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
         case "thread.message-sent":
         case "thread.follow-up-queued":
+        case "thread.follow-up-updated":
+        case "thread.follow-up-deleted":
+        case "thread.yolo-started":
+        case "thread.yolo-stopped":
+        case "thread.yolo-review-completed":
         case "thread.proposed-plan-upserted":
         case "thread.activity-appended":
         case "thread.approval-response-requested":
@@ -926,8 +932,52 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           if (Option.isNone(existingRow)) {
             return;
           }
+          const yoloRun = (() => {
+            switch (event.type) {
+              case "thread.yolo-started":
+                return event.payload.run;
+
+              case "thread.yolo-stopped": {
+                const run = existingRow.value.yoloRun ?? null;
+                if (run === null || run.id !== event.payload.runId) {
+                  return existingRow.value.yoloRun ?? null;
+                }
+                return {
+                  ...run,
+                  status: "stopped" as const,
+                  completedAt: event.payload.stoppedAt,
+                  lastError: event.payload.reason ?? run.lastError,
+                  updatedAt: event.payload.stoppedAt,
+                };
+              }
+
+              case "thread.yolo-review-completed": {
+                const run = existingRow.value.yoloRun ?? null;
+                if (run === null || run.id !== event.payload.runId) {
+                  return existingRow.value.yoloRun ?? null;
+                }
+                return {
+                  ...run,
+                  status: event.payload.status,
+                  iteration: Math.max(run.iteration, event.payload.review.iteration),
+                  reviews: [
+                    event.payload.review,
+                    ...run.reviews.filter((review) => review.id !== event.payload.review.id),
+                  ].slice(0, 20),
+                  lastReview: event.payload.review,
+                  lastError: event.payload.review.error,
+                  completedAt: event.payload.status === "active" ? null : event.payload.updatedAt,
+                  updatedAt: event.payload.updatedAt,
+                };
+              }
+
+              default:
+                return existingRow.value.yoloRun ?? null;
+            }
+          })();
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
+            yoloRun,
             updatedAt: event.occurredAt,
           });
           yield* refreshThreadShellSummary(event.payload.threadId);
@@ -1019,6 +1069,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
             turnId: event.payload.turnId,
             role: event.payload.role,
+            origin: event.payload.origin ?? "human",
             text: nextText,
             ...(nextAttachments !== undefined ? { attachments: [...nextAttachments] } : {}),
             isStreaming: event.payload.streaming,
@@ -1085,6 +1136,29 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             attachments: [...attachments],
             modelSelection: event.payload.followUp.modelSelection,
             queuedAt: event.payload.followUp.queuedAt,
+          });
+          return;
+        }
+
+        case "thread.follow-up-updated": {
+          const attachments = yield* materializeAttachmentsForProjection({
+            attachments: event.payload.followUp.attachments,
+          });
+          yield* projectionThreadQueuedFollowUpRepository.upsert({
+            followUpId: event.payload.followUp.id,
+            threadId: event.payload.threadId,
+            messageId: event.payload.followUp.messageId,
+            text: event.payload.followUp.text,
+            attachments: [...attachments],
+            modelSelection: event.payload.followUp.modelSelection,
+            queuedAt: event.payload.followUp.queuedAt,
+          });
+          return;
+        }
+
+        case "thread.follow-up-deleted": {
+          yield* projectionThreadQueuedFollowUpRepository.deleteByFollowUpId({
+            followUpId: event.payload.followUpId,
           });
           return;
         }

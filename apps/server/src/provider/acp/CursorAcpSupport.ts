@@ -1,10 +1,12 @@
 import { type CursorModelOptions, type CursorSettings } from "@t3tools/contracts";
 import { Effect, Layer, Scope } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import type * as EffectAcpErrors from "effect-acp/errors";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import {
   CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
+  isCursorAcpLaunchOnlyModel,
+  readCursorAcpCurrentModelId,
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
 } from "../Layers/CursorProvider.ts";
@@ -23,6 +25,7 @@ export interface CursorAcpRuntimeInput extends Omit<
 > {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly cursorSettings: CursorAcpRuntimeCursorSettings | null | undefined;
+  readonly launchModelOverride?: string;
 }
 
 export interface CursorAcpModelSelectionErrorContext {
@@ -34,11 +37,13 @@ export interface CursorAcpModelSelectionErrorContext {
 export function buildCursorAcpSpawnInput(
   cursorSettings: CursorAcpRuntimeCursorSettings | null | undefined,
   cwd: string,
+  launchModelOverride?: string,
 ): AcpSpawnInput {
   return {
     command: cursorSettings?.binaryPath || "agent",
     args: [
       ...(cursorSettings?.apiEndpoint ? (["-e", cursorSettings.apiEndpoint] as const) : []),
+      ...(launchModelOverride ? (["--model", launchModelOverride] as const) : []),
       "acp",
     ],
     cwd,
@@ -52,7 +57,7 @@ export const makeCursorAcpRuntime = (
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         ...input,
-        spawn: buildCursorAcpSpawnInput(input.cursorSettings, input.cwd),
+        spawn: buildCursorAcpSpawnInput(input.cursorSettings, input.cwd, input.launchModelOverride),
         authMethodId: "cursor_login",
         clientCapabilities: CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
       }).pipe(
@@ -80,7 +85,31 @@ export function applyCursorAcpModelSelection<E>(input: {
   readonly mapError: (context: CursorAcpModelSelectionErrorContext) => E;
 }): Effect.Effect<void, E> {
   return Effect.gen(function* () {
-    yield* input.runtime.setModel(resolveCursorAcpBaseModelId(input.model)).pipe(
+    const baseModel = resolveCursorAcpBaseModelId(input.model);
+    const initialConfigOptions = yield* input.runtime.getConfigOptions;
+    const currentModel = readCursorAcpCurrentModelId(initialConfigOptions);
+
+    if (
+      isCursorAcpLaunchOnlyModel(baseModel) &&
+      currentModel !== undefined &&
+      currentModel !== baseModel
+    ) {
+      return yield* Effect.fail(
+        input.mapError({
+          cause: new EffectAcpErrors.AcpRequestError({
+            code: -32602,
+            errorMessage: `Cursor model ${baseModel} must be selected when the ACP process starts; Cursor rejects switching to it in-session.`,
+            data: {
+              model: baseModel,
+              currentModel,
+            },
+          }),
+          step: "set-model",
+        }),
+      );
+    }
+
+    yield* input.runtime.setModel(baseModel).pipe(
       Effect.mapError((cause) =>
         input.mapError({
           cause,

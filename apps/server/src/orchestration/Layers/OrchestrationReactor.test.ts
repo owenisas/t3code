@@ -7,6 +7,7 @@ import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeInge
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
 import { OrchestrationReactor } from "../Services/OrchestrationReactor.ts";
 import { ScheduledJobReactor } from "../Services/ScheduledJobReactor.ts";
+import { YoloReactor } from "../Services/YoloReactor.ts";
 import { makeOrchestrationReactor } from "./OrchestrationReactor.ts";
 
 describe("OrchestrationReactor", () => {
@@ -19,7 +20,7 @@ describe("OrchestrationReactor", () => {
     runtime = null;
   });
 
-  it("starts provider ingestion, provider command, checkpoint, scheduled job, and thread deletion reactors", async () => {
+  it("starts provider ingestion, provider command, checkpoint, scheduled job, thread deletion, and YOLO reactors", async () => {
     const started: string[] = [];
 
     runtime = ManagedRuntime.make(
@@ -69,6 +70,15 @@ describe("OrchestrationReactor", () => {
             drain: Effect.void,
           }),
         ),
+        Layer.provideMerge(
+          Layer.succeed(YoloReactor, {
+            start: () => {
+              started.push("yolo-reactor");
+              return Effect.void;
+            },
+            drain: Effect.void,
+          }),
+        ),
       ),
     );
 
@@ -82,6 +92,7 @@ describe("OrchestrationReactor", () => {
       "checkpoint-reactor",
       "scheduled-job-reactor",
       "thread-deletion-reactor",
+      "yolo-reactor",
     ]);
 
     await Effect.runPromise(Scope.close(scope, Exit.void));

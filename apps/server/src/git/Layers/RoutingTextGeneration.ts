@@ -66,6 +66,7 @@ const makeRoutingTextGeneration = Effect.gen(function* () {
     generatePrContent: (input) => route(input.modelSelection.provider).generatePrContent(input),
     generateBranchName: (input) => route(input.modelSelection.provider).generateBranchName(input),
     generateThreadTitle: (input) => route(input.modelSelection.provider).generateThreadTitle(input),
+    generateYoloReview: (input) => route(input.modelSelection.provider).generateYoloReview(input),
   } satisfies TextGenerationShape;
 });
 

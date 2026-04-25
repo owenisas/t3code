@@ -39,6 +39,12 @@ export const GetProjectionThreadQueuedFollowUpByMessageIdInput = Schema.Struct({
 export type GetProjectionThreadQueuedFollowUpByMessageIdInput =
   typeof GetProjectionThreadQueuedFollowUpByMessageIdInput.Type;
 
+export const DeleteProjectionThreadQueuedFollowUpByIdInput = Schema.Struct({
+  followUpId: Schema.String,
+});
+export type DeleteProjectionThreadQueuedFollowUpByIdInput =
+  typeof DeleteProjectionThreadQueuedFollowUpByIdInput.Type;
+
 export interface ProjectionThreadQueuedFollowUpRepositoryShape {
   readonly upsert: (
     row: ProjectionThreadQueuedFollowUp,
@@ -51,6 +57,9 @@ export interface ProjectionThreadQueuedFollowUpRepositoryShape {
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadQueuedFollowUp>, ProjectionRepositoryError>;
   readonly deleteByMessageId: (
     input: GetProjectionThreadQueuedFollowUpByMessageIdInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+  readonly deleteByFollowUpId: (
+    input: DeleteProjectionThreadQueuedFollowUpByIdInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
   readonly deleteByThreadId: (
     input: DeleteProjectionThreadQueuedFollowUpsInput,

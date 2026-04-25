@@ -1,6 +1,6 @@
 import { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
 import { memo, type ReactNode } from "react";
-import { EllipsisIcon, ListTodoIcon } from "lucide-react";
+import { BotIcon, EllipsisIcon, ListTodoIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import {
   Menu,
@@ -20,9 +20,12 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   runtimeMode: RuntimeMode;
   showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
+  yoloDisabled: boolean;
+  yoloActive: boolean;
   onToggleInteractionMode: () => void;
   onTogglePlanSidebar: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
+  onStartYolo: () => void;
 }) {
   return (
     <Menu>
@@ -84,6 +87,11 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             </MenuItem>
           </>
         ) : null}
+        <MenuDivider />
+        <MenuItem disabled={props.yoloDisabled} onClick={props.onStartYolo}>
+          <BotIcon className="size-4 shrink-0" />
+          {props.yoloActive ? "YOLO running" : "Start YOLO mode"}
+        </MenuItem>
       </MenuPopup>
     </Menu>
   );

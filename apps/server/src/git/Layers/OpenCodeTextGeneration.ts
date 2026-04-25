@@ -16,8 +16,13 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildYoloReviewPrompt,
 } from "../Prompts.ts";
-import { type TextGenerationShape, TextGeneration } from "../Services/TextGeneration.ts";
+import {
+  type TextGenerationShape,
+  TextGeneration,
+  type YoloReviewGenerationResult,
+} from "../Services/TextGeneration.ts";
 import {
   extractJsonObject,
   sanitizeCommitSubject,
@@ -153,7 +158,8 @@ const makeOpenCodeTextGeneration = Effect.gen(function* () {
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateYoloReview";
   }) =>
     sharedServerMutex.withPermit(
       Effect.gen(function* () {
@@ -262,7 +268,8 @@ const makeOpenCodeTextGeneration = Effect.gen(function* () {
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateYoloReview";
     readonly cwd: string;
     readonly prompt: string;
     readonly outputSchemaJson: S;
@@ -498,11 +505,40 @@ const makeOpenCodeTextGeneration = Effect.gen(function* () {
     };
   });
 
+  const generateYoloReview: TextGenerationShape["generateYoloReview"] = Effect.fn(
+    "OpenCodeTextGeneration.generateYoloReview",
+  )(function* (input) {
+    if (input.modelSelection.provider !== "opencode") {
+      return yield* new TextGenerationError({
+        operation: "generateYoloReview",
+        detail: "Invalid model selection.",
+      });
+    }
+
+    const { prompt, outputSchema } = buildYoloReviewPrompt(input);
+    const generated = yield* runOpenCodeJson({
+      operation: "generateYoloReview",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return {
+      goalReached: generated.goalReached,
+      confidence: Math.max(0, Math.min(100, Math.round(generated.confidence))),
+      missing: generated.missing.map((entry) => entry.trim()).filter(Boolean),
+      nextPrompt: generated.nextPrompt.trim(),
+      reviewNote: generated.reviewNote.trim(),
+    } satisfies YoloReviewGenerationResult;
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateYoloReview,
   } satisfies TextGenerationShape;
 });
 

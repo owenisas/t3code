@@ -4,6 +4,7 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import { toPersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";
 import {
+  DeleteProjectionThreadQueuedFollowUpByIdInput,
   DeleteProjectionThreadQueuedFollowUpsInput,
   GetProjectionThreadQueuedFollowUpByMessageIdInput,
   ListProjectionThreadQueuedFollowUpsInput,
@@ -110,6 +111,15 @@ const makeProjectionThreadQueuedFollowUpRepository = Effect.gen(function* () {
       `,
   });
 
+  const deleteByFollowUpIdRows = SqlSchema.void({
+    Request: DeleteProjectionThreadQueuedFollowUpByIdInput,
+    execute: ({ followUpId }) =>
+      sql`
+        DELETE FROM projection_thread_queued_follow_ups
+        WHERE follow_up_id = ${followUpId}
+      `,
+  });
+
   const deleteByThreadIdRows = SqlSchema.void({
     Request: DeleteProjectionThreadQueuedFollowUpsInput,
     execute: ({ threadId }) =>
@@ -180,6 +190,15 @@ const makeProjectionThreadQueuedFollowUpRepository = Effect.gen(function* () {
       ),
     );
 
+  const deleteByFollowUpId: ProjectionThreadQueuedFollowUpRepositoryShape["deleteByFollowUpId"] = (
+    input,
+  ) =>
+    deleteByFollowUpIdRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionThreadQueuedFollowUpRepository.deleteByFollowUpId:query"),
+      ),
+    );
+
   const deleteByThreadId: ProjectionThreadQueuedFollowUpRepositoryShape["deleteByThreadId"] = (
     input,
   ) =>
@@ -194,6 +213,7 @@ const makeProjectionThreadQueuedFollowUpRepository = Effect.gen(function* () {
     getByMessageId,
     listByThreadId,
     deleteByMessageId,
+    deleteByFollowUpId,
     deleteByThreadId,
   } satisfies ProjectionThreadQueuedFollowUpRepositoryShape;
 });

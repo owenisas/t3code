@@ -20,6 +20,7 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
   TerminalOpenInput,
+  YoloRunId,
 } from "@t3tools/contracts";
 import {
   parseScopedThreadKey,
@@ -50,8 +51,10 @@ import {
   derivePendingUserInputs,
   derivePhase,
   deriveTimelineEntries,
+  deriveTurnDiffSummaryByAssistantMessageId,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveRevertTurnCountByUserMessageId,
   findSidebarProposedPlan,
   findLatestProposedPlan,
   deriveWorkLogEntries,
@@ -89,7 +92,6 @@ import {
   type ChatMessage,
   type SessionPhase,
   type Thread,
-  type TurnDiffSummary,
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
@@ -1378,46 +1380,19 @@ export default function ChatView(props: ChatViewProps) {
   );
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
-  const turnDiffSummaryByAssistantMessageId = useMemo(() => {
-    const byMessageId = new Map<MessageId, TurnDiffSummary>();
-    for (const summary of turnDiffSummaries) {
-      if (!summary.assistantMessageId) continue;
-      byMessageId.set(summary.assistantMessageId, summary);
-    }
-    return byMessageId;
-  }, [turnDiffSummaries]);
-  const revertTurnCountByUserMessageId = useMemo(() => {
-    const byUserMessageId = new Map<MessageId, number>();
-    for (let index = 0; index < timelineEntries.length; index += 1) {
-      const entry = timelineEntries[index];
-      if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
-        continue;
-      }
-
-      for (let nextIndex = index + 1; nextIndex < timelineEntries.length; nextIndex += 1) {
-        const nextEntry = timelineEntries[nextIndex];
-        if (!nextEntry || nextEntry.kind !== "message") {
-          continue;
-        }
-        if (nextEntry.message.role === "user") {
-          break;
-        }
-        const summary = turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
-        if (!summary) {
-          continue;
-        }
-        const turnCount =
-          summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
-        if (typeof turnCount !== "number") {
-          break;
-        }
-        byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
-        break;
-      }
-    }
-
-    return byUserMessageId;
-  }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
+  const turnDiffSummaryByAssistantMessageId = useMemo(
+    () => deriveTurnDiffSummaryByAssistantMessageId(timelineEntries, turnDiffSummaries),
+    [timelineEntries, turnDiffSummaries],
+  );
+  const revertTurnCountByUserMessageId = useMemo(
+    () =>
+      deriveRevertTurnCountByUserMessageId({
+        timelineEntries,
+        turnDiffSummaryByAssistantMessageId,
+        inferredCheckpointTurnCountByTurnId,
+      }),
+    [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId],
+  );
 
   const completionSummary = useMemo(() => {
     if (!latestTurnSettled) return null;
@@ -2442,13 +2417,24 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
-  const submitComposer = async (activeRunMode?: ThreadFollowUpMode) => {
+  const submitComposer = async (
+    activeRunMode?: ThreadFollowUpMode,
+    options?: { startYolo?: boolean },
+  ) => {
     const effectiveActiveRunMode =
       activeThreadHasRunningTurn && isServerThread
         ? (activeRunMode ?? settings.activeTurnFollowUpMode)
         : null;
     const api = readEnvironmentApi(environmentId);
     if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (options?.startYolo && activeThreadHasRunningTurn) {
+      setThreadError(activeThread.id, "Wait for the current turn to finish before starting YOLO.");
+      return;
+    }
+    if (options?.startYolo && activeThread.yoloRun?.status === "active") {
+      setThreadError(activeThread.id, "This thread already has an active YOLO run.");
+      return;
+    }
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
       return;
@@ -2520,6 +2506,10 @@ export default function ChatView(props: ChatViewProps) {
       composerRef.current?.resetCursorState();
       return;
     }
+    if (options?.startYolo && trimmed.length === 0) {
+      setThreadError(activeThread.id, "Enter the YOLO ultimate goal in the composer first.");
+      return;
+    }
     if (!hasSendableContent) {
       if (expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -2566,6 +2556,7 @@ export default function ChatView(props: ChatViewProps) {
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
+    const yoloRunIdForSend = options?.startYolo ? YoloRunId.make(randomUUID()) : null;
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
       model: ctxSelectedModel,
@@ -2762,7 +2753,30 @@ export default function ChatView(props: ChatViewProps) {
         });
       }
       turnStartSucceeded = true;
+      if (yoloRunIdForSend) {
+        await api.orchestration.dispatchCommand({
+          type: "thread.yolo.start",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          runId: yoloRunIdForSend,
+          goal: trimmed,
+          maxIterations: 10,
+          createdAt: messageCreatedAt,
+        });
+      }
     })().catch(async (err: unknown) => {
+      if (yoloRunIdForSend) {
+        await api.orchestration
+          .dispatchCommand({
+            type: "thread.yolo.stop",
+            commandId: newCommandId(),
+            threadId: threadIdForSend,
+            runId: yoloRunIdForSend,
+            reason: "Initial YOLO turn failed to start.",
+            createdAt: new Date().toISOString(),
+          })
+          .catch(() => undefined);
+      }
       if (
         !turnStartSucceeded &&
         promptRef.current.length === 0 &&
@@ -2812,6 +2826,48 @@ export default function ChatView(props: ChatViewProps) {
 
   const onSteerFollowUp = async () => {
     await submitComposer("steer");
+  };
+
+  const onEditQueuedFollowUp = async (followUpId: string, text: string) => {
+    const api = readEnvironmentApi(environmentId);
+    if (!api || !activeThread) return;
+    await api.orchestration.dispatchCommand({
+      type: "thread.follow-up.update",
+      commandId: newCommandId(),
+      threadId: activeThread.id,
+      followUpId,
+      text,
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
+  const onDeleteQueuedFollowUp = async (followUpId: string) => {
+    const api = readEnvironmentApi(environmentId);
+    if (!api || !activeThread) return;
+    await api.orchestration.dispatchCommand({
+      type: "thread.follow-up.delete",
+      commandId: newCommandId(),
+      threadId: activeThread.id,
+      followUpId,
+      deletedAt: new Date().toISOString(),
+    });
+  };
+
+  const onStartYolo = async () => {
+    await submitComposer(undefined, { startYolo: true });
+  };
+
+  const onStopYolo = async () => {
+    const api = readEnvironmentApi(environmentId);
+    if (!api || !activeThread?.yoloRun || activeThread.yoloRun.status !== "active") return;
+    await api.orchestration.dispatchCommand({
+      type: "thread.yolo.stop",
+      commandId: newCommandId(),
+      threadId: activeThread.id,
+      runId: activeThread.yoloRun.id,
+      reason: "Stopped by user.",
+      createdAt: new Date().toISOString(),
+    });
   };
 
   const onInterrupt = async () => {
@@ -3603,6 +3659,10 @@ export default function ChatView(props: ChatViewProps) {
               onInterrupt={onInterrupt}
               onQueueFollowUp={onQueueFollowUp}
               onSteerFollowUp={onSteerFollowUp}
+              onEditQueuedFollowUp={onEditQueuedFollowUp}
+              onDeleteQueuedFollowUp={onDeleteQueuedFollowUp}
+              onStartYolo={onStartYolo}
+              onStopYolo={onStopYolo}
               onImplementPlanInNewThread={onImplementPlanInNewThread}
               onRespondToApproval={onRespondToApproval}
               onSelectActivePendingUserInputOption={onSelectActivePendingUserInputOption}

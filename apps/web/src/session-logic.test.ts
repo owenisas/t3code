@@ -13,7 +13,9 @@ import {
   deriveActivePlanState,
   derivePendingApprovals,
   derivePendingUserInputs,
+  deriveRevertTurnCountByUserMessageId,
   deriveTimelineEntries,
+  deriveTurnDiffSummaryByAssistantMessageId,
   deriveWorkLogEntries,
   findLatestProposedPlan,
   findSidebarProposedPlan,
@@ -22,6 +24,8 @@ import {
   hasToolActivityForTurn,
   isLatestTurnSettled,
 } from "./session-logic";
+import type { TimelineEntry } from "./session-logic";
+import type { TurnDiffSummary } from "./types";
 
 function makeActivity(overrides: {
   id?: string;
@@ -1340,6 +1344,97 @@ describe("deriveTimelineEntries", () => {
         completedAt: "2026-02-23T00:00:02.000Z",
       }),
     ).toBe("assistant-final");
+  });
+});
+
+describe("deriveTurnDiffSummaryByAssistantMessageId", () => {
+  it("maps summaries to assistant messages by turn id when the summary lacks an assistant message id", () => {
+    const entries: TimelineEntry[] = [
+      {
+        id: "user-1",
+        kind: "message",
+        createdAt: "2026-02-23T00:00:00.000Z",
+        message: {
+          id: MessageId.make("user-1"),
+          role: "user",
+          text: "Change the code",
+          createdAt: "2026-02-23T00:00:00.000Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "assistant-1",
+        kind: "message",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        message: {
+          id: MessageId.make("assistant-1"),
+          role: "assistant",
+          text: "Done",
+          turnId: TurnId.make("turn-1"),
+          createdAt: "2026-02-23T00:00:01.000Z",
+          streaming: false,
+        },
+      },
+    ];
+    const summary: TurnDiffSummary = {
+      turnId: TurnId.make("turn-1"),
+      completedAt: "2026-02-23T00:00:02.000Z",
+      checkpointTurnCount: 1,
+      files: [{ path: "src/index.ts", kind: "modified", additions: 1, deletions: 0 }],
+    };
+
+    const mapped = deriveTurnDiffSummaryByAssistantMessageId(entries, [summary]);
+
+    expect(mapped.get(MessageId.make("assistant-1"))).toBe(summary);
+  });
+});
+
+describe("deriveRevertTurnCountByUserMessageId", () => {
+  it("keeps revert available when checkpoints can only be matched through assistant turn id", () => {
+    const entries: TimelineEntry[] = [
+      {
+        id: "user-1",
+        kind: "message",
+        createdAt: "2026-02-23T00:00:00.000Z",
+        message: {
+          id: MessageId.make("user-1"),
+          role: "user",
+          text: "Change the code",
+          createdAt: "2026-02-23T00:00:00.000Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "assistant-1",
+        kind: "message",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        message: {
+          id: MessageId.make("assistant-1"),
+          role: "assistant",
+          text: "Done",
+          turnId: TurnId.make("turn-2"),
+          createdAt: "2026-02-23T00:00:01.000Z",
+          streaming: false,
+        },
+      },
+    ];
+    const summary: TurnDiffSummary = {
+      turnId: TurnId.make("turn-2"),
+      completedAt: "2026-02-23T00:00:02.000Z",
+      checkpointTurnCount: 2,
+      files: [{ path: "src/index.ts", kind: "modified", additions: 1, deletions: 0 }],
+    };
+    const summaryByAssistantMessageId = deriveTurnDiffSummaryByAssistantMessageId(entries, [
+      summary,
+    ]);
+
+    const revertCounts = deriveRevertTurnCountByUserMessageId({
+      timelineEntries: entries,
+      turnDiffSummaryByAssistantMessageId: summaryByAssistantMessageId,
+      inferredCheckpointTurnCountByTurnId: {},
+    });
+
+    expect(revertCounts.get(MessageId.make("user-1"))).toBe(1);
   });
 });
 

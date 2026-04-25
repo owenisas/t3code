@@ -61,6 +61,7 @@ import {
 import { ThreadDeletionReactor } from "../src/orchestration/Services/ThreadDeletionReactor.ts";
 import { OrchestrationReactor } from "../src/orchestration/Services/OrchestrationReactor.ts";
 import { ProjectionSnapshotQuery } from "../src/orchestration/Services/ProjectionSnapshotQuery.ts";
+import { YoloEvaluator } from "../src/orchestration/Services/YoloEvaluator.ts";
 import {
   RuntimeReceiptBus,
   type OrchestrationRuntimeReceipt,
@@ -315,6 +316,14 @@ export const makeOrchestrationIntegrationHarness = (
     const textGenerationLayer = Layer.succeed(TextGeneration, {
       generateBranchName: () => Effect.succeed({ branch: "update" }),
       generateThreadTitle: () => Effect.succeed({ title: "New thread" }),
+      generateYoloReview: () =>
+        Effect.succeed({
+          goalReached: true,
+          confidence: 100,
+          missing: [],
+          nextPrompt: "",
+          reviewNote: "Goal reached.",
+        }),
     } as unknown as TextGenerationShape);
     const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
@@ -357,6 +366,18 @@ export const makeOrchestrationIntegrationHarness = (
         Layer.succeed(ThreadDeletionReactor, {
           start: () => Effect.void,
           drain: Effect.void,
+        }),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(YoloEvaluator, {
+          evaluate: () =>
+            Effect.succeed({
+              goalReached: true,
+              confidence: 100,
+              missing: [],
+              nextPrompt: "",
+              reviewNote: "Goal reached.",
+            }),
         }),
       ),
       Layer.provideMerge(

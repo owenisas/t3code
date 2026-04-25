@@ -20,8 +20,10 @@ import {
   parseCursorAboutOutput,
   parseCursorCliConfigChannel,
   parseCursorVersionDate,
+  readCursorAcpCurrentModelId,
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
+  resolveCursorAcpLaunchModelOverride,
 } from "./CursorProvider.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -639,6 +641,34 @@ describe("resolveCursorAcpBaseModelId", () => {
     );
     expect(resolveCursorAcpBaseModelId("composer-2")).toBe("composer-2");
     expect(resolveCursorAcpBaseModelId("auto")).toBe("auto");
+  });
+});
+
+describe("resolveCursorAcpLaunchModelOverride", () => {
+  it("maps Cursor ACP stale Spark id to the CLI-accepted preview id", () => {
+    expect(resolveCursorAcpLaunchModelOverride("gpt-5.3-codex-spark")).toBe(
+      "gpt-5.3-codex-spark-preview",
+    );
+    expect(resolveCursorAcpLaunchModelOverride("gpt-5.3-codex-spark[reasoning=high]")).toBe(
+      "gpt-5.3-codex-spark-preview",
+    );
+  });
+
+  it("does not override normal ACP model ids", () => {
+    expect(resolveCursorAcpLaunchModelOverride("composer-2")).toBeUndefined();
+    expect(resolveCursorAcpLaunchModelOverride("gpt-5.4")).toBeUndefined();
+  });
+});
+
+describe("readCursorAcpCurrentModelId", () => {
+  it("reads the current ACP model selector value", () => {
+    expect(readCursorAcpCurrentModelId(parameterizedGpt54ConfigOptions)).toBe(
+      "gpt-5.4-medium-fast",
+    );
+  });
+
+  it("returns undefined when ACP does not expose a model selector", () => {
+    expect(readCursorAcpCurrentModelId([])).toBeUndefined();
   });
 });
 

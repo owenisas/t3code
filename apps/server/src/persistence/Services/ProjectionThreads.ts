@@ -16,9 +16,9 @@ import {
   RuntimeMode,
   ThreadId,
   TurnId,
+  YoloRun,
 } from "@t3tools/contracts";
-import { Option, Schema, Context } from "effect";
-import type { Effect } from "effect";
+import { Effect, Option, Schema, Context } from "effect";
 
 import type { ProjectionRepositoryError } from "../Errors.ts";
 
@@ -34,6 +34,7 @@ export const ProjectionThread = Schema.Struct({
   forkSourceThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   forkSourceMessageId: Schema.optional(Schema.NullOr(MessageId)),
   forkContextHydratedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  yoloRun: Schema.optional(Schema.NullOr(YoloRun)),
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

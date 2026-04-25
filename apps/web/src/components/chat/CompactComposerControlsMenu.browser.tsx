@@ -127,6 +127,8 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
       planSidebarOpen={false}
       runtimeMode="approval-required"
       showInteractionModeToggle
+      yoloActive={false}
+      yoloDisabled={false}
       traitsMenuContent={
         <TraitsMenuContent
           provider={provider}
@@ -141,6 +143,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
       onToggleInteractionMode={vi.fn()}
       onTogglePlanSidebar={vi.fn()}
       onRuntimeModeChange={vi.fn()}
+      onStartYolo={vi.fn()}
     />,
     { container: host },
   );
@@ -280,9 +283,12 @@ describe("CompactComposerControlsMenu", () => {
         planSidebarOpen={false}
         runtimeMode="approval-required"
         showInteractionModeToggle={false}
+        yoloActive={false}
+        yoloDisabled={false}
         onToggleInteractionMode={vi.fn()}
         onTogglePlanSidebar={vi.fn()}
         onRuntimeModeChange={vi.fn()}
+        onStartYolo={vi.fn()}
       />,
       { container: host },
     );

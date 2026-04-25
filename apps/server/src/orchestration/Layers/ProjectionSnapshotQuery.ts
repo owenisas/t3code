@@ -29,6 +29,7 @@ import {
   ModelSelection,
   ProjectId,
   ThreadId,
+  YoloRun,
 } from "@t3tools/contracts";
 import { Effect, Layer, Option, Schema, Struct } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -102,6 +103,7 @@ const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
+    yoloRun: Schema.NullOr(Schema.fromJsonString(YoloRun)),
   }),
 );
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
@@ -452,6 +454,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           fork_source_thread_id AS "forkSourceThreadId",
           fork_source_message_id AS "forkSourceMessageId",
           fork_context_hydrated_at AS "forkContextHydratedAt",
+          yolo_run_json AS "yoloRun",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -476,6 +479,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           thread_id AS "threadId",
           turn_id AS "turnId",
           role,
+          origin,
           text,
           attachments_json AS "attachments",
           is_streaming AS "isStreaming",
@@ -724,6 +728,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          fork_source_thread_id AS "forkSourceThreadId",
+          fork_source_message_id AS "forkSourceMessageId",
+          fork_context_hydrated_at AS "forkContextHydratedAt",
+          yolo_run_json AS "yoloRun",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -750,6 +758,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           thread_id AS "threadId",
           turn_id AS "turnId",
           role,
+          origin,
           text,
           attachments_json AS "attachments",
           is_streaming AS "isStreaming",
@@ -1058,6 +1067,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 threadMessages.push({
                   id: row.messageId,
                   role: row.role,
+                  origin: row.origin,
                   text: row.text,
                   ...(row.attachments !== null ? { attachments: row.attachments } : {}),
                   turnId: row.turnId,
@@ -1220,6 +1230,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                       }
                     : null,
                 latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                yoloRun: row.yoloRun,
                 queuedFollowUps: queuedFollowUpsByThread.get(row.threadId) ?? [],
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
@@ -1746,6 +1757,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             id: row.messageId,
             role: row.role,
             text: row.text,
+            origin: row.origin,
             turnId: row.turnId,
             streaming: row.isStreaming === 1,
             createdAt: row.createdAt,
@@ -1790,6 +1802,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           completedAt: row.completedAt,
         })),
         session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
+        yoloRun: threadRow.value.yoloRun,
       };
 
       return Option.some(

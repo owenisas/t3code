@@ -216,6 +216,14 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
     );
+    const generateYoloReview = vi.fn<TextGenerationShape["generateYoloReview"]>((_) =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateYoloReview",
+          detail: "disabled in test harness",
+        }),
+      ),
+    );
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
     const service: ProviderServiceShape = {
@@ -263,6 +271,7 @@ describe("ProviderCommandReactor", () => {
         Layer.mock(TextGeneration, {
           generateBranchName,
           generateThreadTitle,
+          generateYoloReview,
         }),
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),

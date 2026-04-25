@@ -73,7 +73,10 @@ import {
   extractTodosAsPlan,
 } from "../acp/CursorAcpExtension.ts";
 import { CursorAdapter, type CursorAdapterShape } from "../Services/CursorAdapter.ts";
-import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
+import {
+  resolveCursorAcpBaseModelId,
+  resolveCursorAcpLaunchModelOverride,
+} from "./CursorProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "cursor" as const;
@@ -469,6 +472,9 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
           let ctx!: CursorSessionContext;
 
           const resumeSessionId = parseCursorResume(input.resumeCursor)?.sessionId;
+          const launchModelOverride = cursorModelSelection?.model
+            ? resolveCursorAcpLaunchModelOverride(cursorModelSelection.model)
+            : undefined;
           const acpNativeLoggers = makeAcpNativeLoggers({
             nativeEventLogger,
             provider: PROVIDER,
@@ -480,6 +486,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
             childProcessSpawner,
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),
+            ...(launchModelOverride ? { launchModelOverride } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
             ...acpNativeLoggers,
           }).pipe(

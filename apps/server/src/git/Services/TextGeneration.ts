@@ -73,6 +73,25 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
+export interface YoloReviewGenerationInput {
+  cwd: string;
+  goal: string;
+  transcript: string;
+  latestAssistantText: string;
+  checkpointSummary: string;
+  iteration: number;
+  maxIterations: number;
+  modelSelection: ModelSelection;
+}
+
+export interface YoloReviewGenerationResult {
+  goalReached: boolean;
+  confidence: number;
+  missing: string[];
+  nextPrompt: string;
+  reviewNote: string;
+}
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -80,6 +99,7 @@ export interface TextGenerationService {
   generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
   generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
   generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
+  generateYoloReview(input: YoloReviewGenerationInput): Promise<YoloReviewGenerationResult>;
 }
 
 /**
@@ -113,6 +133,13 @@ export interface TextGenerationShape {
   readonly generateThreadTitle: (
     input: ThreadTitleGenerationInput,
   ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+  /**
+   * Evaluate whether a YOLO run has reached its goal and produce the next instruction.
+   */
+  readonly generateYoloReview: (
+    input: YoloReviewGenerationInput,
+  ) => Effect.Effect<YoloReviewGenerationResult, TextGenerationError>;
 }
 
 /**

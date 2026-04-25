@@ -27,9 +27,14 @@ import {
   ThreadTurnSteerRequestedPayload as ContractsThreadTurnSteerRequestedPayloadSchema,
   ThreadTurnInterruptRequestedPayload as ContractsThreadTurnInterruptRequestedPayloadSchema,
   ThreadFollowUpQueuedPayload as ContractsThreadFollowUpQueuedPayloadSchema,
+  ThreadFollowUpUpdatedPayload as ContractsThreadFollowUpUpdatedPayloadSchema,
+  ThreadFollowUpDeletedPayload as ContractsThreadFollowUpDeletedPayloadSchema,
   ThreadApprovalResponseRequestedPayload as ContractsThreadApprovalResponseRequestedPayloadSchema,
   ThreadCheckpointRevertRequestedPayload as ContractsThreadCheckpointRevertRequestedPayloadSchema,
   ThreadSessionStopRequestedPayload as ContractsThreadSessionStopRequestedPayloadSchema,
+  ThreadYoloReviewCompletedPayload as ContractsThreadYoloReviewCompletedPayloadSchema,
+  ThreadYoloStartedPayload as ContractsThreadYoloStartedPayloadSchema,
+  ThreadYoloStoppedPayload as ContractsThreadYoloStoppedPayloadSchema,
 } from "@t3tools/contracts";
 
 // Server-internal alias surface, backed by contract schemas as the source of truth.
@@ -59,12 +64,17 @@ export const ThreadSessionSetPayload = ContractsThreadSessionSetPayloadSchema;
 export const ThreadTurnDiffCompletedPayload = ContractsThreadTurnDiffCompletedPayloadSchema;
 export const ThreadRevertedPayload = ContractsThreadRevertedPayloadSchema;
 export const ThreadActivityAppendedPayload = ContractsThreadActivityAppendedPayloadSchema;
+export const ThreadYoloStartedPayload = ContractsThreadYoloStartedPayloadSchema;
+export const ThreadYoloStoppedPayload = ContractsThreadYoloStoppedPayloadSchema;
+export const ThreadYoloReviewCompletedPayload = ContractsThreadYoloReviewCompletedPayloadSchema;
 
 export const ThreadTurnStartRequestedPayload = ContractsThreadTurnStartRequestedPayloadSchema;
 export const ThreadTurnSteerRequestedPayload = ContractsThreadTurnSteerRequestedPayloadSchema;
 export const ThreadTurnInterruptRequestedPayload =
   ContractsThreadTurnInterruptRequestedPayloadSchema;
 export const ThreadFollowUpQueuedPayload = ContractsThreadFollowUpQueuedPayloadSchema;
+export const ThreadFollowUpUpdatedPayload = ContractsThreadFollowUpUpdatedPayloadSchema;
+export const ThreadFollowUpDeletedPayload = ContractsThreadFollowUpDeletedPayloadSchema;
 export const ThreadApprovalResponseRequestedPayload =
   ContractsThreadApprovalResponseRequestedPayloadSchema;
 export const ThreadCheckpointRevertRequestedPayload =

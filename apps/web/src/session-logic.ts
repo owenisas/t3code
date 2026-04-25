@@ -9,6 +9,7 @@ import {
   type ProviderKind,
   type ToolLifecycleItemType,
   type UserInputQuestion,
+  type MessageId,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
@@ -1222,6 +1223,77 @@ export function deriveCompletionDividerBeforeEntryId(
     }
   }
   return inRangeMatch ?? fallbackMatch;
+}
+
+export function deriveTurnDiffSummaryByAssistantMessageId(
+  timelineEntries: ReadonlyArray<TimelineEntry>,
+  summaries: ReadonlyArray<TurnDiffSummary>,
+): Map<MessageId, TurnDiffSummary> {
+  const byAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
+  const byTurnId = new Map<TurnId, TurnDiffSummary>();
+
+  for (const summary of summaries) {
+    byTurnId.set(summary.turnId, summary);
+    if (summary.assistantMessageId) {
+      byAssistantMessageId.set(summary.assistantMessageId, summary);
+    }
+  }
+
+  for (const timelineEntry of timelineEntries) {
+    if (timelineEntry.kind !== "message" || timelineEntry.message.role !== "assistant") {
+      continue;
+    }
+    if (byAssistantMessageId.has(timelineEntry.message.id)) {
+      continue;
+    }
+    if (!timelineEntry.message.turnId) {
+      continue;
+    }
+    const summary = byTurnId.get(timelineEntry.message.turnId);
+    if (summary) {
+      byAssistantMessageId.set(timelineEntry.message.id, summary);
+    }
+  }
+
+  return byAssistantMessageId;
+}
+
+export function deriveRevertTurnCountByUserMessageId(input: {
+  timelineEntries: ReadonlyArray<TimelineEntry>;
+  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
+  inferredCheckpointTurnCountByTurnId: Readonly<Record<TurnId, number>>;
+}): Map<MessageId, number> {
+  const byUserMessageId = new Map<MessageId, number>();
+
+  for (let index = 0; index < input.timelineEntries.length; index += 1) {
+    const entry = input.timelineEntries[index];
+    if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
+      continue;
+    }
+
+    for (let nextIndex = index + 1; nextIndex < input.timelineEntries.length; nextIndex += 1) {
+      const nextEntry = input.timelineEntries[nextIndex];
+      if (!nextEntry || nextEntry.kind !== "message") {
+        continue;
+      }
+      if (nextEntry.message.role === "user") {
+        break;
+      }
+      const summary = input.turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
+      if (!summary) {
+        continue;
+      }
+      const turnCount =
+        summary.checkpointTurnCount ?? input.inferredCheckpointTurnCountByTurnId[summary.turnId];
+      if (typeof turnCount !== "number") {
+        break;
+      }
+      byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
+      break;
+    }
+  }
+
+  return byUserMessageId;
 }
 
 export function inferCheckpointTurnCountByTurnId(

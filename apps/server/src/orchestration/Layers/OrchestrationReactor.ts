@@ -11,6 +11,8 @@ import { ScheduledJobReactor } from "../Services/ScheduledJobReactor.ts";
 import { ScheduledJobReactorLive } from "./ScheduledJobReactor.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
 import { ThreadDeletionReactorLive } from "./ThreadDeletionReactor.ts";
+import { YoloReactor } from "../Services/YoloReactor.ts";
+import { YoloReactorLive } from "./YoloReactor.ts";
 
 export const makeOrchestrationReactor = Effect.gen(function* () {
   const providerRuntimeIngestion = yield* ProviderRuntimeIngestionService;
@@ -18,6 +20,7 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
   const checkpointReactor = yield* CheckpointReactor;
   const scheduledJobReactor = yield* ScheduledJobReactor;
   const threadDeletionReactor = yield* ThreadDeletionReactor;
+  const yoloReactor = yield* YoloReactor;
 
   const start: OrchestrationReactorShape["start"] = Effect.fn("start")(function* () {
     yield* providerRuntimeIngestion.start();
@@ -25,6 +28,7 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
     yield* checkpointReactor.start();
     yield* scheduledJobReactor.start();
     yield* threadDeletionReactor.start();
+    yield* yoloReactor.start();
   });
 
   return {
@@ -35,4 +39,8 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
 export const OrchestrationReactorLive = Layer.effect(
   OrchestrationReactor,
   makeOrchestrationReactor,
-).pipe(Layer.provideMerge(ScheduledJobReactorLive), Layer.provideMerge(ThreadDeletionReactorLive));
+).pipe(
+  Layer.provideMerge(ScheduledJobReactorLive),
+  Layer.provideMerge(ThreadDeletionReactorLive),
+  Layer.provideMerge(YoloReactorLive),
+);

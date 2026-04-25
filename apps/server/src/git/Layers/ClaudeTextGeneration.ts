@@ -14,12 +14,17 @@ import { ClaudeModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 
 import { TextGenerationError } from "@t3tools/contracts";
-import { type TextGenerationShape, TextGeneration } from "../Services/TextGeneration.ts";
+import {
+  type TextGenerationShape,
+  TextGeneration,
+  type YoloReviewGenerationResult,
+} from "../Services/TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildYoloReviewPrompt,
 } from "../Prompts.ts";
 import {
   normalizeCliError,
@@ -77,7 +82,8 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateYoloReview";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -99,6 +105,10 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
       serverSettingsService.getSettings,
       (settings) => settings.providers.claudeAgent,
     ).pipe(Effect.catch(() => Effect.undefined));
+    const safeReviewArgs =
+      operation === "generateYoloReview"
+        ? (["--permission-mode", "plan", "--tools", ""] as const)
+        : [];
 
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* () {
       const command = ChildProcess.make(
@@ -113,7 +123,8 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
           resolveClaudeApiModelId(modelSelection),
           ...(normalizedOptions?.effort ? ["--effort", normalizedOptions.effort] : []),
           ...(Object.keys(settings).length > 0 ? ["--settings", JSON.stringify(settings)] : []),
-          "--dangerously-skip-permissions",
+          ...safeReviewArgs,
+          ...(operation === "generateYoloReview" ? [] : ["--dangerously-skip-permissions"]),
         ],
         {
           cwd,
@@ -328,11 +339,41 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
     };
   });
 
+  const generateYoloReview: TextGenerationShape["generateYoloReview"] = Effect.fn(
+    "ClaudeTextGeneration.generateYoloReview",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildYoloReviewPrompt(input);
+
+    if (input.modelSelection.provider !== "claudeAgent") {
+      return yield* new TextGenerationError({
+        operation: "generateYoloReview",
+        detail: "Invalid model selection.",
+      });
+    }
+
+    const generated = yield* runClaudeJson({
+      operation: "generateYoloReview",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return {
+      goalReached: generated.goalReached,
+      confidence: Math.max(0, Math.min(100, Math.round(generated.confidence))),
+      missing: generated.missing.map((entry) => entry.trim()).filter(Boolean),
+      nextPrompt: generated.nextPrompt.trim(),
+      reviewNote: generated.reviewNote.trim(),
+    } satisfies YoloReviewGenerationResult;
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateYoloReview,
   } satisfies TextGenerationShape;
 });
 

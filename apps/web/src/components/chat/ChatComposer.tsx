@@ -441,6 +441,10 @@ export interface ChatComposerProps {
   onInterrupt: () => void;
   onQueueFollowUp: () => void;
   onSteerFollowUp: () => void;
+  onEditQueuedFollowUp: (followUpId: string, text: string) => void | Promise<void>;
+  onDeleteQueuedFollowUp: (followUpId: string) => void | Promise<void>;
+  onStartYolo: () => void;
+  onStopYolo: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
@@ -526,6 +530,10 @@ export const ChatComposer = memo(
       onInterrupt,
       onQueueFollowUp,
       onSteerFollowUp,
+      onEditQueuedFollowUp,
+      onDeleteQueuedFollowUp,
+      onStartYolo,
+      onStopYolo,
       onImplementPlanInNewThread,
       onRespondToApproval,
       onSelectActivePendingUserInputOption,
@@ -834,6 +842,13 @@ export const ChatComposer = memo(
 
     const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
     const showPlanSidebarToggle = Boolean(activePlan || sidebarProposedPlan || planSidebarOpen);
+    const isYoloActive = activeThread?.yoloRun?.status === "active";
+    const isYoloStartDisabled =
+      isConnecting ||
+      isSendBusy ||
+      isYoloActive ||
+      pendingUserInputs.length > 0 ||
+      Boolean(activePendingApproval);
     const composerFooterActionLayoutKey = useMemo(() => {
       if (activePendingProgress) {
         return `pending:${activePendingProgress.questionIndex}:${activePendingProgress.isLastQuestion}:${activePendingIsResponding}`;
@@ -1869,7 +1884,32 @@ export const ChatComposer = memo(
                   </div>
                 )}
 
-              <ComposerQueuedFollowUps followUps={activeThread?.queuedFollowUps ?? []} />
+              <ComposerQueuedFollowUps
+                followUps={activeThread?.queuedFollowUps ?? []}
+                onEdit={onEditQueuedFollowUp}
+                onDelete={onDeleteQueuedFollowUp}
+              />
+
+              {activeThread?.yoloRun ? (
+                <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-amber-500">
+                      YOLO {activeThread.yoloRun.status}
+                      {activeThread.yoloRun.status === "active"
+                        ? ` · ${activeThread.yoloRun.iteration}/${activeThread.yoloRun.maxIterations}`
+                        : ""}
+                    </div>
+                    <div className="truncate text-muted-foreground">
+                      {activeThread.yoloRun.lastReview?.reviewNote || activeThread.yoloRun.goal}
+                    </div>
+                  </div>
+                  {activeThread.yoloRun.status === "active" ? (
+                    <Button type="button" size="xs" variant="outline" onClick={onStopYolo}>
+                      Stop
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
 
               <ComposerPromptEditor
                 ref={composerEditorRef}
@@ -1956,9 +1996,12 @@ export const ChatComposer = memo(
                       runtimeMode={runtimeMode}
                       showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                       traitsMenuContent={providerTraitsMenuContent}
+                      yoloActive={isYoloActive}
+                      yoloDisabled={isYoloStartDisabled}
                       onToggleInteractionMode={toggleInteractionMode}
                       onTogglePlanSidebar={togglePlanSidebar}
                       onRuntimeModeChange={handleRuntimeModeChange}
+                      onStartYolo={onStartYolo}
                     />
                   ) : (
                     <>
@@ -1984,6 +2027,17 @@ export const ChatComposer = memo(
                         onRuntimeModeChange={handleRuntimeModeChange}
                         onTogglePlanSidebar={togglePlanSidebar}
                       />
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant={isYoloActive ? "secondary" : "ghost"}
+                        disabled={isYoloStartDisabled}
+                        onClick={onStartYolo}
+                        title="Start YOLO mode with the current composer prompt as the ultimate goal"
+                      >
+                        <BotIcon className="size-3.5" />
+                        YOLO
+                      </Button>
                     </>
                   )}
                 </div>
