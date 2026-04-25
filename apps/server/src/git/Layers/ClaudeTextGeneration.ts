@@ -48,6 +48,64 @@ const ClaudeOutputEnvelope = Schema.Struct({
   structured_output: Schema.Unknown,
 });
 
+function normalizeBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "yes") return true;
+  if (normalized === "false" || normalized === "no") return false;
+  return null;
+}
+
+function normalizeString(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+}
+
+function normalizeStringList(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : [value];
+  return values.map(normalizeString).filter(Boolean);
+}
+
+function normalizeYoloReviewStructuredOutput(
+  raw: unknown,
+): Effect.Effect<YoloReviewGenerationResult, TextGenerationError> {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return Effect.fail(
+      new TextGenerationError({
+        operation: "generateYoloReview",
+        detail: "Claude YOLO review returned non-object structured output.",
+      }),
+    );
+  }
+
+  const record = raw as Record<string, unknown>;
+  const goalReached = normalizeBoolean(record.goalReached);
+  if (goalReached === null) {
+    return Effect.fail(
+      new TextGenerationError({
+        operation: "generateYoloReview",
+        detail: "Claude YOLO review returned missing or invalid goalReached.",
+      }),
+    );
+  }
+
+  const confidenceValue =
+    typeof record.confidence === "number"
+      ? record.confidence
+      : Number(normalizeString(record.confidence));
+  const confidence = Number.isFinite(confidenceValue) ? confidenceValue : 0;
+
+  return Effect.succeed({
+    goalReached,
+    confidence: Math.max(0, Math.min(100, Math.round(confidence))),
+    missing: normalizeStringList(record.missing),
+    nextPrompt: normalizeString(record.nextPrompt),
+    reviewNote: normalizeString(record.reviewNote),
+  });
+}
+
 const makeClaudeTextGeneration = Effect.gen(function* () {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverSettingsService = yield* Effect.service(ServerSettingsService);
@@ -199,6 +257,10 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
         ),
       ),
     );
+
+    if (operation === "generateYoloReview") {
+      return envelope.structured_output as S["Type"];
+    }
 
     return yield* Schema.decodeEffect(outputSchemaJson)(envelope.structured_output).pipe(
       Effect.catchTag("SchemaError", (cause) =>
@@ -359,13 +421,7 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
       modelSelection: input.modelSelection,
     });
 
-    return {
-      goalReached: generated.goalReached,
-      confidence: Math.max(0, Math.min(100, Math.round(generated.confidence))),
-      missing: generated.missing.map((entry) => entry.trim()).filter(Boolean),
-      nextPrompt: generated.nextPrompt.trim(),
-      reviewNote: generated.reviewNote.trim(),
-    } satisfies YoloReviewGenerationResult;
+    return yield* normalizeYoloReviewStructuredOutput(generated);
   });
 
   return {
