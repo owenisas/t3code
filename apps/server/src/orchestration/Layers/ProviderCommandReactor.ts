@@ -90,6 +90,8 @@ const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
 const FORK_CONTEXT_TRANSCRIPT_MAX_CHARS = Math.min(60_000, PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
 const FORK_CONTEXT_MESSAGE_MAX_CHARS = 12_000;
+const INTERRUPTED_BY_RESTART_DETAIL =
+  "T3 Code restarted before this provider turn finished. The previous provider process is gone; send a new message to continue in a fresh session.";
 
 function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolean {
   const trimmedCurrentTitle = currentTitle.trim();
@@ -940,6 +942,44 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const reconcileInterruptedSessionsOnStart = Effect.fn("reconcileInterruptedSessionsOnStart")(
+    function* () {
+      const readModel = yield* orchestrationEngine.getReadModel();
+      const activeSessions = yield* providerService.listSessions();
+      const activeThreadIds = new Set(activeSessions.map((session) => session.threadId));
+      const now = new Date().toISOString();
+
+      yield* Effect.forEach(
+        readModel.threads,
+        (thread) => {
+          const session = thread.session;
+          if (!session) {
+            return Effect.void;
+          }
+          if (session.status !== "running" && session.status !== "starting") {
+            return Effect.void;
+          }
+          if (activeThreadIds.has(thread.id)) {
+            return Effect.void;
+          }
+
+          return setThreadSession({
+            threadId: thread.id,
+            session: {
+              ...session,
+              status: "ready",
+              activeTurnId: null,
+              lastError: INTERRUPTED_BY_RESTART_DETAIL,
+              updatedAt: now,
+            },
+            createdAt: now,
+          });
+        },
+        { discard: true },
+      );
+    },
+  );
+
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.approval-response-requested" }>,
   ) {
@@ -1142,6 +1182,13 @@ const make = Effect.gen(function* () {
 
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
+    );
+    yield* reconcileInterruptedSessionsOnStart().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider command reactor failed to reconcile interrupted sessions", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
     );
   });
 

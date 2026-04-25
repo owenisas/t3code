@@ -989,6 +989,73 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("restarts and retries claudeAgent sendTurn when the live conversation is stale", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      const initial = yield* provider.startSession(asThreadId("thread-claude-stale-live-send"), {
+        provider: "claudeAgent",
+        threadId: asThreadId("thread-claude-stale-live-send"),
+        cwd: "/tmp/project-claude-stale-live-send",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-6",
+          options: {
+            effort: "max",
+          },
+        },
+        runtimeMode: "full-access",
+      });
+
+      routing.claude.startSession.mockClear();
+      routing.claude.stopSession.mockClear();
+      routing.claude.sendTurn.mockClear();
+      routing.claude.sendTurn.mockImplementationOnce(() =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "claudeAgent",
+            method: "conversation/send",
+            detail:
+              "Claude Code returned an error result: No conversation found with session ID: stale-session-id",
+          }),
+        ),
+      );
+
+      yield* provider.sendTurn({
+        threadId: initial.threadId,
+        input: "continue after stale live send",
+        attachments: [],
+      });
+
+      assert.equal(routing.claude.stopSession.mock.calls.length, 1);
+      assert.deepEqual(routing.claude.stopSession.mock.calls[0], [initial.threadId]);
+      assert.equal(routing.claude.startSession.mock.calls.length, 1);
+      const freshStartInput = routing.claude.startSession.mock.calls[0]?.[0];
+      assert.equal(typeof freshStartInput === "object" && freshStartInput !== null, true);
+      if (freshStartInput && typeof freshStartInput === "object") {
+        const startPayload = freshStartInput as {
+          provider?: string;
+          cwd?: string;
+          modelSelection?: unknown;
+          resumeCursor?: unknown;
+          threadId?: string;
+        };
+        assert.equal(startPayload.provider, "claudeAgent");
+        assert.equal(startPayload.cwd, "/tmp/project-claude-stale-live-send");
+        assert.deepEqual(startPayload.modelSelection, {
+          provider: "claudeAgent",
+          model: "claude-opus-4-6",
+          options: {
+            effort: "max",
+          },
+        });
+        assert.equal("resumeCursor" in startPayload, false);
+        assert.equal(startPayload.threadId, initial.threadId);
+      }
+      assert.equal(routing.claude.sendTurn.mock.calls.length, 2);
+    }),
+  );
+
   it.effect("lists no sessions after adapter runtime clears", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;

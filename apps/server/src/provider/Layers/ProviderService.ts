@@ -255,6 +255,59 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  const restartClaudeSessionAfterStaleSendTurn = Effect.fn(
+    "restartClaudeSessionAfterStaleSendTurn",
+  )(function* (input: {
+    readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
+    readonly sendTurnInput: ProviderSendTurnInput;
+  }) {
+    const binding = Option.getOrUndefined(
+      yield* directory.getBinding(input.sendTurnInput.threadId),
+    );
+    const persistedCwd = binding ? readPersistedCwd(binding.runtimePayload) : undefined;
+    const persistedModelSelection = binding
+      ? readPersistedModelSelection(binding.runtimePayload)
+      : undefined;
+    const modelSelection = input.sendTurnInput.modelSelection ?? persistedModelSelection;
+    const restartedAt = new Date().toISOString();
+
+    yield* input.adapter.stopSession(input.sendTurnInput.threadId).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider.session.stop-stale-send-turn-failed", {
+          threadId: input.sendTurnInput.threadId,
+          provider: input.adapter.provider,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+
+    yield* analytics.record("provider.session.resume_fallback", {
+      provider: input.adapter.provider,
+      operation: "send",
+      reason: "stale-remote-conversation",
+    });
+
+    const session = yield* startSessionWithFallback({
+      adapter: input.adapter,
+      sessionInput: {
+        threadId: input.sendTurnInput.threadId,
+        provider: input.adapter.provider,
+        ...(persistedCwd !== undefined ? { cwd: persistedCwd } : {}),
+        ...(modelSelection !== undefined ? { modelSelection } : {}),
+        runtimeMode: binding?.runtimeMode ?? "full-access",
+      },
+      fallbackReason: "recover",
+    });
+
+    yield* upsertSessionBinding(session, input.sendTurnInput.threadId, {
+      ...(modelSelection !== undefined ? { modelSelection } : {}),
+      lastRuntimeEvent: "provider.session.resume_fallback",
+      lastRuntimeEventAt: restartedAt,
+    });
+
+    return session;
+  });
+
   yield* Effect.forEach(adapters, (adapter) =>
     Stream.runForEach(adapter.streamEvents, processRuntimeEvent).pipe(Effect.forkScoped),
   ).pipe(Effect.asVoid);
@@ -521,7 +574,19 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "provider.kind": routed.adapter.provider,
         ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
       });
-      const turn = yield* routed.adapter.sendTurn(input);
+      const turn = yield* routed.adapter.sendTurn(input).pipe(
+        Effect.catchCause((cause) => {
+          const error = Cause.squash(cause);
+          if (routed.adapter.provider !== "claudeAgent" || !isClaudeStaleResumeError(error)) {
+            return Effect.failCause(cause);
+          }
+
+          return restartClaudeSessionAfterStaleSendTurn({
+            adapter: routed.adapter,
+            sendTurnInput: input,
+          }).pipe(Effect.andThen(routed.adapter.sendTurn(input)));
+        }),
+      );
       yield* directory.upsert({
         threadId: input.threadId,
         provider: routed.adapter.provider,
