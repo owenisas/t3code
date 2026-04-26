@@ -141,7 +141,13 @@ import {
   type TerminalContextSelection,
 } from "../lib/terminalContext";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
-import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import {
+  ChatComposer,
+  type ChatComposerHandle,
+  type ComposerMode,
+  type YoloIterationLimit,
+  type YoloTriggerDelaySeconds,
+} from "./chat/ChatComposer";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
@@ -636,6 +642,11 @@ export default function ChatView(props: ChatViewProps) {
   const composerInteractionMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.interactionMode ?? null,
   );
+  const [composerYoloModeEnabled, setComposerYoloModeEnabled] = useState(false);
+  const [composerYoloIterationLimit, setComposerYoloIterationLimit] =
+    useState<YoloIterationLimit>(10);
+  const [composerYoloTriggerDelaySeconds, setComposerYoloTriggerDelaySeconds] =
+    useState<YoloTriggerDelaySeconds>(0);
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
@@ -806,6 +817,7 @@ export default function ChatView(props: ChatViewProps) {
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
+  const composerMode: ComposerMode = composerYoloModeEnabled ? "yolo" : interactionMode;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.diff === "1";
@@ -1889,6 +1901,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const handleInteractionModeChange = useCallback(
     (mode: ProviderInteractionMode) => {
+      setComposerYoloModeEnabled(false);
       if (mode === interactionMode) return;
       setComposerDraftInteractionMode(composerDraftTarget, mode);
       if (isLocalDraftThread) {
@@ -1908,6 +1921,31 @@ export default function ChatView(props: ChatViewProps) {
   const toggleInteractionMode = useCallback(() => {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
+  const handleComposerModeChange = useCallback(
+    (mode: ComposerMode) => {
+      if (mode === "yolo") {
+        setComposerYoloModeEnabled(true);
+        if (interactionMode !== "default") {
+          setComposerDraftInteractionMode(composerDraftTarget, "default");
+          if (isLocalDraftThread) {
+            setDraftThreadContext(composerDraftTarget, { interactionMode: "default" });
+          }
+        }
+        scheduleComposerFocus();
+        return;
+      }
+      handleInteractionModeChange(mode);
+    },
+    [
+      composerDraftTarget,
+      handleInteractionModeChange,
+      interactionMode,
+      isLocalDraftThread,
+      scheduleComposerFocus,
+      setComposerDraftInteractionMode,
+      setDraftThreadContext,
+    ],
+  );
   const togglePlanSidebar = useCallback(() => {
     setPlanSidebarOpen((open) => {
       if (open) {
@@ -2429,7 +2467,11 @@ export default function ChatView(props: ChatViewProps) {
 
   const submitComposer = async (
     activeRunMode?: ThreadFollowUpMode,
-    options?: { startYolo?: boolean },
+    options?: {
+      startYolo?: boolean;
+      yoloMaxIterations?: YoloIterationLimit;
+      yoloTriggerDelaySeconds?: YoloTriggerDelaySeconds;
+    },
   ) => {
     const effectiveActiveRunMode =
       activeThreadHasRunningTurn && isServerThread
@@ -2707,6 +2749,7 @@ export default function ChatView(props: ChatViewProps) {
             attachments: turnAttachments,
           },
           modelSelection: ctxSelectedModelSelection,
+          interactionMode,
           createdAt: messageCreatedAt,
         });
         toastManager.add({
@@ -2770,7 +2813,8 @@ export default function ChatView(props: ChatViewProps) {
           threadId: threadIdForSend,
           runId: yoloRunIdForSend,
           goal: trimmed,
-          maxIterations: 10,
+          maxIterations: options?.yoloMaxIterations ?? 10,
+          triggerDelaySeconds: options?.yoloTriggerDelaySeconds ?? 0,
           createdAt: messageCreatedAt,
         });
       }
@@ -2827,7 +2871,17 @@ export default function ChatView(props: ChatViewProps) {
 
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
-    await submitComposer();
+    const shouldStartYolo = composerMode === "yolo" && activeThread?.yoloRun?.status !== "active";
+    await submitComposer(
+      undefined,
+      shouldStartYolo
+        ? {
+            startYolo: true,
+            yoloMaxIterations: composerYoloIterationLimit,
+            yoloTriggerDelaySeconds: composerYoloTriggerDelaySeconds,
+          }
+        : undefined,
+    );
   };
 
   const onQueueFollowUp = async () => {
@@ -2861,10 +2915,6 @@ export default function ChatView(props: ChatViewProps) {
       followUpId,
       deletedAt: new Date().toISOString(),
     });
-  };
-
-  const onStartYolo = async () => {
-    await submitComposer(undefined, { startYolo: true });
   };
 
   const onStopYolo = async () => {
@@ -3651,7 +3701,9 @@ export default function ChatView(props: ChatViewProps) {
               planSidebarLabel={planSidebarLabel}
               planSidebarOpen={planSidebarOpen}
               runtimeMode={runtimeMode}
-              interactionMode={interactionMode}
+              composerMode={composerMode}
+              yoloIterationLimit={composerYoloIterationLimit}
+              yoloTriggerDelaySeconds={composerYoloTriggerDelaySeconds}
               lockedProvider={lockedProvider}
               providerStatuses={providerStatuses as ServerProvider[]}
               activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}
@@ -3673,7 +3725,6 @@ export default function ChatView(props: ChatViewProps) {
               onSteerFollowUp={onSteerFollowUp}
               onEditQueuedFollowUp={onEditQueuedFollowUp}
               onDeleteQueuedFollowUp={onDeleteQueuedFollowUp}
-              onStartYolo={onStartYolo}
               onStopYolo={onStopYolo}
               onImplementPlanInNewThread={onImplementPlanInNewThread}
               onRespondToApproval={onRespondToApproval}
@@ -3687,6 +3738,9 @@ export default function ChatView(props: ChatViewProps) {
               toggleInteractionMode={toggleInteractionMode}
               handleRuntimeModeChange={handleRuntimeModeChange}
               handleInteractionModeChange={handleInteractionModeChange}
+              handleComposerModeChange={handleComposerModeChange}
+              onYoloIterationLimitChange={setComposerYoloIterationLimit}
+              onYoloTriggerDelaySecondsChange={setComposerYoloTriggerDelaySeconds}
               togglePlanSidebar={togglePlanSidebar}
               focusComposer={focusComposer}
               scheduleComposerFocus={scheduleComposerFocus}

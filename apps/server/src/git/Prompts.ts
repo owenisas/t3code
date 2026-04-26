@@ -211,7 +211,7 @@ export interface YoloReviewPromptInput {
   latestAssistantText: string;
   checkpointSummary: string;
   iteration: number;
-  maxIterations: number;
+  maxIterations: number | null;
 }
 
 export function buildYoloReviewPrompt(input: YoloReviewPromptInput) {
@@ -229,7 +229,7 @@ export function buildYoloReviewPrompt(input: YoloReviewPromptInput) {
     "- nextPrompt must be an empty string when goalReached is true.",
     "- reviewNote must be a short visible note explaining your verdict.",
     "",
-    `Iteration: ${input.iteration} of ${input.maxIterations}`,
+    `Iteration: ${input.iteration} of ${input.maxIterations ?? "unlimited"}`,
     "",
     "Ultimate goal:",
     limitSection(input.goal, 8_000),

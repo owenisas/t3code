@@ -502,6 +502,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           model_selection_json AS "modelSelection",
+          interaction_mode AS "interactionMode",
           queued_at AS "queuedAt"
         FROM projection_thread_queued_follow_ups
         ORDER BY thread_id ASC, queued_at ASC, follow_up_id ASC
@@ -782,6 +783,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           model_selection_json AS "modelSelection",
+          interaction_mode AS "interactionMode",
           queued_at AS "queuedAt"
         FROM projection_thread_queued_follow_ups
         WHERE thread_id = ${threadId}
@@ -1087,6 +1089,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   text: row.text,
                   attachments: row.attachments,
                   modelSelection: row.modelSelection,
+                  ...(row.interactionMode !== null ? { interactionMode: row.interactionMode } : {}),
                   queuedAt: row.queuedAt,
                 });
                 queuedFollowUpsByThread.set(row.threadId, threadFollowUps);
@@ -1740,14 +1743,20 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
-        queuedFollowUps: queuedFollowUpRows.map((row) => ({
-          id: row.followUpId,
-          messageId: row.messageId,
-          text: row.text,
-          attachments: row.attachments ?? [],
-          modelSelection: row.modelSelection,
-          queuedAt: row.queuedAt,
-        })),
+        queuedFollowUps: queuedFollowUpRows.map((row) => {
+          const followUp: OrchestrationQueuedFollowUp = {
+            id: row.followUpId,
+            messageId: row.messageId,
+            text: row.text,
+            attachments: row.attachments ?? [],
+            modelSelection: row.modelSelection,
+            queuedAt: row.queuedAt,
+          };
+          if (row.interactionMode !== null) {
+            Object.assign(followUp, { interactionMode: row.interactionMode });
+          }
+          return followUp;
+        }),
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,

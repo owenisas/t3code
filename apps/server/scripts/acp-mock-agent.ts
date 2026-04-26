@@ -30,6 +30,21 @@ let currentContext = "272k";
 let currentFast = false;
 const cancelledSessions = new Set<string>();
 
+function acpModelIdFromLaunchModel(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (value.startsWith("gpt-5.4")) return "gpt-5.4";
+  if (value.startsWith("claude-4.6-opus")) return "claude-opus-4-6";
+  if (value === "composer-2-fast") return "composer-2";
+  return value;
+}
+
+const launchModelArg = process.argv.findIndex((arg) => arg === "--model");
+const launchModelId =
+  launchModelArg >= 0 ? acpModelIdFromLaunchModel(process.argv[launchModelArg + 1]) : undefined;
+if (launchModelId) {
+  currentModelId = launchModelId;
+}
+
 function logExit(reason: string): void {
   if (!exitLogPath) {
     return;

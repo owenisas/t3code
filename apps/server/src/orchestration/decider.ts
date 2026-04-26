@@ -76,6 +76,35 @@ type DecideOrchestrationCommandResult =
   | PlannedOrchestrationEvent
   | ReadonlyArray<PlannedOrchestrationEvent>;
 
+function buildYoloInterruptedByUserMessageEvent(input: {
+  readonly thread: OrchestrationReadModel["threads"][number];
+  readonly command: Pick<OrchestrationCommand, "commandId"> & {
+    readonly threadId: OrchestrationReadModel["threads"][number]["id"];
+    readonly createdAt: string;
+  };
+  readonly messageOrigin: "human" | "yolo-reviewer" | undefined;
+}): PlannedOrchestrationEvent | null {
+  if (input.messageOrigin === "yolo-reviewer") return null;
+  const activeRun = input.thread.yoloRun?.status === "active" ? input.thread.yoloRun : null;
+  if (!activeRun) return null;
+  return {
+    ...withEventBase({
+      aggregateKind: "thread",
+      aggregateId: input.command.threadId,
+      occurredAt: input.command.createdAt,
+      commandId: input.command.commandId,
+    }),
+    type: "thread.yolo-stopped",
+    payload: {
+      threadId: input.command.threadId,
+      runId: activeRun.id,
+      reason: "Interrupted by user message.",
+      stoppedAt: input.command.createdAt,
+      updatedAt: input.command.createdAt,
+    },
+  };
+}
+
 const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   commands,
   readModel,
@@ -594,28 +623,35 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
 
       const copiedMessageEvents: ReadonlyArray<Omit<OrchestrationEvent, "sequence">> =
-        sourceThread.messages.slice(0, sourceMessageIndex).map((message, index) => ({
-          ...withEventBase({
-            aggregateKind: "thread",
-            aggregateId: command.threadId,
-            occurredAt: message.createdAt,
-            commandId: command.commandId,
-          }),
-          ...(index === 0 ? { causationEventId: threadCreatedEvent.eventId } : {}),
-          type: "thread.message-sent" as const,
-          payload: {
-            threadId: command.threadId,
-            messageId: crypto.randomUUID() as MessageId,
-            role: message.role,
-            text: message.text,
-            ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
-            origin: message.origin,
-            turnId: null,
-            streaming: false,
-            createdAt: message.createdAt,
-            updatedAt: message.updatedAt,
-          },
-        }));
+        sourceThread.messages.slice(0, sourceMessageIndex).map((message, index) => {
+          const event = Object.assign(
+            withEventBase({
+              aggregateKind: "thread",
+              aggregateId: command.threadId,
+              occurredAt: message.createdAt,
+              commandId: command.commandId,
+            }),
+            index === 0 ? { causationEventId: threadCreatedEvent.eventId } : {},
+            {
+              type: "thread.message-sent" as const,
+              payload: {
+                threadId: command.threadId,
+                messageId: crypto.randomUUID() as MessageId,
+                role: message.role,
+                text: message.text,
+                origin: message.origin,
+                turnId: null,
+                streaming: false,
+                createdAt: message.createdAt,
+                updatedAt: message.updatedAt,
+              },
+            },
+          );
+          if (message.attachments !== undefined) {
+            Object.assign(event.payload, { attachments: message.attachments });
+          }
+          return event;
+        });
 
       return [threadCreatedEvent, ...copiedMessageEvents];
     }
@@ -834,7 +870,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           createdAt: command.createdAt,
         },
       };
-      return [userMessageEvent, turnStartRequestedEvent];
+      const yoloInterruptedEvent = buildYoloInterruptedByUserMessageEvent({
+        thread: targetThread,
+        command,
+        messageOrigin: command.message.origin,
+      });
+      return yoloInterruptedEvent
+        ? [yoloInterruptedEvent, userMessageEvent, turnStartRequestedEvent]
+        : [userMessageEvent, turnStartRequestedEvent];
     }
 
     case "thread.turn.steer": {
@@ -888,7 +931,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           createdAt: command.createdAt,
         },
       };
-      return [userMessageEvent, steerRequestedEvent];
+      const yoloInterruptedEvent = buildYoloInterruptedByUserMessageEvent({
+        thread,
+        command,
+        messageOrigin: command.message.origin,
+      });
+      return yoloInterruptedEvent
+        ? [yoloInterruptedEvent, userMessageEvent, steerRequestedEvent]
+        : [userMessageEvent, steerRequestedEvent];
     }
 
     case "thread.follow-up.queue": {
@@ -903,7 +953,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Thread '${command.threadId}' does not have an active running turn to queue behind.`,
         });
       }
-      return {
+      const followUpQueuedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -919,11 +969,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             text: command.message.text,
             attachments: command.message.attachments,
             modelSelection: command.modelSelection ?? null,
+            interactionMode: command.interactionMode ?? thread.interactionMode,
             queuedAt: command.createdAt,
           },
           updatedAt: command.createdAt,
         },
       };
+      const yoloInterruptedEvent = buildYoloInterruptedByUserMessageEvent({
+        thread,
+        command,
+        messageOrigin: command.message.origin,
+      });
+      return yoloInterruptedEvent
+        ? [yoloInterruptedEvent, followUpQueuedEvent]
+        : followUpQueuedEvent;
     }
 
     case "thread.follow-up.update": {
@@ -1136,6 +1195,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             goal: command.goal,
             status: "active",
             maxIterations: command.maxIterations,
+            triggerDelaySeconds: command.triggerDelaySeconds,
             iteration: 0,
             lastReview: null,
             reviews: [],

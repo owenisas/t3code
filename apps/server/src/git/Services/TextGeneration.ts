@@ -80,7 +80,7 @@ export interface YoloReviewGenerationInput {
   latestAssistantText: string;
   checkpointSummary: string;
   iteration: number;
-  maxIterations: number;
+  maxIterations: number | null;
   modelSelection: ModelSelection;
 }
 

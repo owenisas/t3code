@@ -140,6 +140,7 @@ export interface QueuedThreadFollowUp {
   text: string;
   attachments: ChatAttachment[];
   modelSelection: ModelSelection | null;
+  interactionMode?: ProviderInteractionMode;
   queuedAt: string;
 }
 

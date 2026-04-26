@@ -46,7 +46,13 @@ function booleanDescriptor(id: string, label: string) {
   };
 }
 
-async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: string }) {
+async function mountMenu(props?: {
+  modelSelection?: ModelSelection;
+  prompt?: string;
+  composerMode?: "default" | "plan" | "yolo";
+  yoloIterationLimit?: number | null;
+  yoloTriggerDelaySeconds?: number;
+}) {
   const threadId = ThreadId.make("thread-compact-menu");
   const threadRef = scopeThreadRef(LOCAL_ENVIRONMENT_ID, threadId);
   const threadKey = scopedThreadKey(threadRef);
@@ -131,13 +137,13 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
   const screen = await render(
     <CompactComposerControlsMenu
       activePlan={false}
-      interactionMode="default"
+      composerMode={props?.composerMode ?? "default"}
       planSidebarLabel="Plan"
       planSidebarOpen={false}
       runtimeMode="approval-required"
+      yoloIterationLimit={props?.yoloIterationLimit ?? 10}
+      yoloTriggerDelaySeconds={props?.yoloTriggerDelaySeconds ?? 0}
       showInteractionModeToggle
-      yoloActive={false}
-      yoloDisabled={false}
       traitsMenuContent={
         <TraitsMenuContent
           provider={provider}
@@ -149,10 +155,11 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
           onPromptChange={onPromptChange}
         />
       }
-      onToggleInteractionMode={vi.fn()}
+      onComposerModeChange={vi.fn()}
       onTogglePlanSidebar={vi.fn()}
       onRuntimeModeChange={vi.fn()}
-      onStartYolo={vi.fn()}
+      onYoloIterationLimitChange={vi.fn()}
+      onYoloTriggerDelaySecondsChange={vi.fn()}
     />,
     { container: host },
   );
@@ -281,17 +288,18 @@ describe("CompactComposerControlsMenu", () => {
     const screen = await render(
       <CompactComposerControlsMenu
         activePlan={false}
-        interactionMode="default"
+        composerMode="default"
         planSidebarLabel="Plan"
         planSidebarOpen={false}
         runtimeMode="approval-required"
+        yoloIterationLimit={10}
+        yoloTriggerDelaySeconds={0}
         showInteractionModeToggle={false}
-        yoloActive={false}
-        yoloDisabled={false}
-        onToggleInteractionMode={vi.fn()}
+        onComposerModeChange={vi.fn()}
         onTogglePlanSidebar={vi.fn()}
         onRuntimeModeChange={vi.fn()}
-        onStartYolo={vi.fn()}
+        onYoloIterationLimitChange={vi.fn()}
+        onYoloTriggerDelaySecondsChange={vi.fn()}
       />,
       { container: host },
     );
@@ -310,5 +318,26 @@ describe("CompactComposerControlsMenu", () => {
 
     await screen.unmount();
     host.remove();
+  });
+
+  it("shows YOLO iteration choices when YOLO mode is selected", async () => {
+    await using _ = await mountMenu({
+      composerMode: "yolo",
+      yoloIterationLimit: null,
+    });
+
+    await page.getByLabelText("More composer controls").click();
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("YOLO limit");
+      expect(text).toContain("3 reviews");
+      expect(text).toContain("10 reviews");
+      expect(text).toContain("25 reviews");
+      expect(text).toContain("Unlimited");
+      expect(text).toContain("YOLO review delay");
+      expect(text).toContain("Immediately");
+      expect(text).toContain("30 sec");
+    });
   });
 });

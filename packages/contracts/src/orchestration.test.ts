@@ -219,6 +219,59 @@ it.effect("preserves explicit provider and runtime mode in thread.turn.start", (
   }),
 );
 
+it.effect("accepts unlimited max iterations for thread.yolo.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.yolo.start",
+      commandId: "cmd-yolo-1",
+      threadId: "thread-1",
+      runId: "yolo-run-1",
+      goal: "Finish the feature",
+      maxIterations: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.type, "thread.yolo.start");
+    if (parsed.type !== "thread.yolo.start") return;
+    assert.strictEqual(parsed.maxIterations, null);
+    assert.strictEqual(parsed.triggerDelaySeconds, 0);
+  }),
+);
+
+it.effect("accepts trigger delay for thread.yolo.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.yolo.start",
+      commandId: "cmd-yolo-delay",
+      threadId: "thread-1",
+      runId: "yolo-run-delay",
+      goal: "Finish the feature",
+      maxIterations: 10,
+      triggerDelaySeconds: 60,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.type, "thread.yolo.start");
+    if (parsed.type !== "thread.yolo.start") return;
+    assert.strictEqual(parsed.triggerDelaySeconds, 60);
+  }),
+);
+
+it.effect("rejects thread.yolo.start max iterations above the safety ceiling", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeOrchestrationCommand({
+        type: "thread.yolo.start",
+        commandId: "cmd-yolo-2",
+        threadId: "thread-1",
+        runId: "yolo-run-2",
+        goal: "Finish the feature",
+        maxIterations: 51,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
 it.effect("accepts bootstrap metadata in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({

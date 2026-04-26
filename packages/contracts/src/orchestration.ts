@@ -375,6 +375,7 @@ export const OrchestrationQueuedFollowUp = Schema.Struct({
   modelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  interactionMode: Schema.optional(ProviderInteractionMode),
   queuedAt: IsoDateTime,
 });
 export type OrchestrationQueuedFollowUp = typeof OrchestrationQueuedFollowUp.Type;
@@ -405,7 +406,10 @@ export const YoloRun = Schema.Struct({
   threadId: ThreadId,
   goal: TrimmedNonEmptyString,
   status: YoloRunStatus,
-  maxIterations: PositiveInt.check(Schema.isLessThanOrEqualTo(50)),
+  maxIterations: Schema.NullOr(PositiveInt.check(Schema.isLessThanOrEqualTo(50))),
+  triggerDelaySeconds: NonNegativeInt.check(Schema.isLessThanOrEqualTo(3600)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(0)),
+  ),
   iteration: NonNegativeInt,
   lastReview: Schema.NullOr(YoloReview).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   reviews: Schema.Array(YoloReview).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
@@ -834,6 +838,7 @@ const ThreadFollowUpQueueCommand = Schema.Struct({
     origin: Schema.optional(OrchestrationMessageOrigin),
   }),
   modelSelection: Schema.optional(ModelSelection),
+  interactionMode: Schema.optional(ProviderInteractionMode),
   createdAt: IsoDateTime,
 });
 
@@ -850,6 +855,7 @@ const ClientThreadFollowUpQueueCommand = Schema.Struct({
     origin: Schema.optional(OrchestrationMessageOrigin),
   }),
   modelSelection: Schema.optional(ModelSelection),
+  interactionMode: Schema.optional(ProviderInteractionMode),
   createdAt: IsoDateTime,
 });
 
@@ -917,8 +923,11 @@ const ThreadYoloStartCommand = Schema.Struct({
   threadId: ThreadId,
   runId: YoloRunId,
   goal: TrimmedNonEmptyString,
-  maxIterations: PositiveInt.check(Schema.isLessThanOrEqualTo(50)).pipe(
+  maxIterations: Schema.NullOr(PositiveInt.check(Schema.isLessThanOrEqualTo(50))).pipe(
     Schema.withDecodingDefault(Effect.succeed(10)),
+  ),
+  triggerDelaySeconds: NonNegativeInt.check(Schema.isLessThanOrEqualTo(3600)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(0)),
   ),
   createdAt: IsoDateTime,
 });

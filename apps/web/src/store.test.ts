@@ -704,6 +704,7 @@ describe("incremental orchestration updates", () => {
           goal: "Finish the feature",
           status: "active",
           maxIterations: 10,
+          triggerDelaySeconds: 0,
           iteration: 0,
           lastReview: null,
           reviews: [],

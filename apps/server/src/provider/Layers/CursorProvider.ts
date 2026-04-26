@@ -19,6 +19,7 @@ import {
   createModelCapabilities,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
+  normalizeModelSlug,
 } from "@t3tools/shared/model";
 
 import {
@@ -123,7 +124,9 @@ function flattenSessionConfigSelectOptions(
   );
 }
 
-function normalizeCursorReasoningValue(value: string | null | undefined): string | undefined {
+function normalizeCursorReasoningValue(
+  value: string | null | undefined,
+): "low" | "medium" | "high" | "max" | "xhigh" | undefined {
   const normalized = value?.trim().toLowerCase();
   switch (normalized) {
     case "low":
@@ -363,6 +366,128 @@ function hasCursorModelCapabilities(model: Pick<ServerProviderModel, "capabiliti
   return (model.capabilities?.optionDescriptors?.length ?? 0) > 0;
 }
 
+function buildCursorGptCapabilities(input?: {
+  readonly reasoning?: "none" | "low" | "medium" | "high" | "xhigh";
+  readonly context?: "272k" | "1m";
+  readonly fast?: boolean;
+}): ModelCapabilities {
+  const reasoning = input?.reasoning ?? "medium";
+  const context = input?.context ?? "272k";
+  const reasoningOptions = [
+    ...(reasoning === "none" ? [{ value: "none", label: "None" }] : []),
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "xhigh", label: "Extra High" },
+  ] as const;
+  return createModelCapabilities({
+    optionDescriptors: [
+      buildSelectOptionDescriptor({
+        id: "reasoning",
+        label: "Reasoning",
+        options: reasoningOptions.map((option) => {
+          const descriptor: {
+            value: (typeof option)["value"];
+            label: (typeof option)["label"];
+            isDefault?: true;
+          } = {
+            value: option.value,
+            label: option.label,
+          };
+          if (option.value === reasoning) {
+            descriptor.isDefault = true;
+          }
+          return descriptor;
+        }),
+      }),
+      buildSelectOptionDescriptor({
+        id: "contextWindow",
+        label: "Context",
+        options: [
+          { value: "272k", label: "272K", isDefault: context === "272k" },
+          { value: "1m", label: "1M", isDefault: context === "1m" },
+        ],
+      }),
+      buildBooleanOptionDescriptor({
+        id: "fastMode",
+        label: "Fast",
+        currentValue: input?.fast ?? false,
+      }),
+    ],
+  });
+}
+
+function buildCursorClaudeCapabilities(input?: {
+  readonly effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  readonly context?: "200k" | "1m";
+  readonly thinking?: boolean;
+  readonly fast?: boolean;
+}): ModelCapabilities {
+  const effort = input?.effort ?? "high";
+  const context = input?.context ?? "200k";
+  return createModelCapabilities({
+    optionDescriptors: [
+      buildSelectOptionDescriptor({
+        id: "reasoning",
+        label: "Effort",
+        options: [
+          { value: "low", label: "Low", isDefault: effort === "low" },
+          { value: "medium", label: "Medium", isDefault: effort === "medium" },
+          { value: "high", label: "High", isDefault: effort === "high" },
+          { value: "xhigh", label: "Extra High", isDefault: effort === "xhigh" },
+          { value: "max", label: "Max", isDefault: effort === "max" },
+        ],
+      }),
+      buildSelectOptionDescriptor({
+        id: "contextWindow",
+        label: "Context",
+        options: [
+          { value: "200k", label: "200K", isDefault: context === "200k" },
+          { value: "1m", label: "1M", isDefault: context === "1m" },
+        ],
+      }),
+      buildBooleanOptionDescriptor({
+        id: "thinking",
+        label: "Thinking",
+        currentValue: input?.thinking ?? true,
+      }),
+      buildBooleanOptionDescriptor({
+        id: "fastMode",
+        label: "Fast",
+        currentValue: input?.fast ?? false,
+      }),
+    ],
+  });
+}
+
+function getCursorFallbackCapabilitiesForModel(model: string): ModelCapabilities {
+  switch (model) {
+    case "gpt-5.5":
+    case "gpt-5.4":
+    case "gpt-5.3-codex":
+    case "gpt-5.2":
+    case "gpt-5.2-codex":
+    case "gpt-5.1-codex-max":
+      return buildCursorGptCapabilities();
+    case "gpt-5.4-mini":
+    case "gpt-5.4-nano":
+      return buildCursorGptCapabilities({ reasoning: "medium" });
+    case "gpt-5.3-codex-spark":
+      return buildCursorGptCapabilities({ reasoning: "medium", context: "272k" });
+    case "claude-opus-4-7":
+      return buildCursorClaudeCapabilities({ effort: "xhigh", thinking: true });
+    case "claude-opus-4-6":
+    case "claude-opus-4-5":
+      return buildCursorClaudeCapabilities({ effort: "high", thinking: true });
+    case "claude-sonnet-4-6":
+    case "claude-sonnet-4-5":
+    case "claude-sonnet-4":
+      return buildCursorClaudeCapabilities({ effort: "medium", thinking: false });
+    default:
+      return EMPTY_CAPABILITIES;
+  }
+}
+
 export function buildCursorDiscoveredModelsFromConfigOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
@@ -387,7 +512,7 @@ export function buildCursorDiscoveredModelsFromConfigOptions(
       capabilities:
         currentModelValue === modelChoice.value.trim()
           ? currentModelCapabilities
-          : EMPTY_CAPABILITIES,
+          : getCursorFallbackCapabilitiesForModel(modelChoice.value.trim()),
     })),
   );
 }
@@ -453,8 +578,9 @@ function findCursorBooleanConfigValue(
 
 export function resolveCursorAcpBaseModelId(model: string | null | undefined): string {
   const trimmed = model?.trim();
-  const base = trimmed && trimmed.length > 0 ? trimmed : "default";
-  return base.includes("[") ? base.slice(0, base.indexOf("[")) : base;
+  const rawBase = trimmed && trimmed.length > 0 ? trimmed : "default";
+  const base = rawBase.includes("[") ? rawBase.slice(0, rawBase.indexOf("[")) : rawBase;
+  return normalizeModelSlug(base, "cursor") ?? "default";
 }
 
 const CURSOR_CLI_LAUNCH_MODEL_ALIASES: Readonly<Record<string, string>> = {
@@ -463,10 +589,91 @@ const CURSOR_CLI_LAUNCH_MODEL_ALIASES: Readonly<Record<string, string>> = {
   "gpt-5.3-codex-spark": "gpt-5.3-codex-spark-preview",
 } as const;
 
+function cursorReasoningSuffix(
+  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  fallback: "none" | "low" | "medium" | "high" | "xhigh" | "max",
+): "none" | "low" | "medium" | "high" | "xhigh" | "max" {
+  const requested = normalizeCursorReasoningValue(
+    getProviderOptionStringSelectionValue(selections, "reasoning"),
+  );
+  return requested ?? fallback;
+}
+
+function cursorFastSuffix(
+  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): string {
+  return getProviderOptionBooleanSelectionValue(selections, "fastMode") ? "-fast" : "";
+}
+
 export function resolveCursorAcpLaunchModelOverride(
   model: string | null | undefined,
+  selections?: ReadonlyArray<ProviderOptionSelection> | null | undefined,
 ): string | undefined {
   const baseModel = resolveCursorAcpBaseModelId(model);
+  const effort = cursorReasoningSuffix(selections, "medium");
+  const fast = cursorFastSuffix(selections);
+  switch (baseModel) {
+    case "gpt-5.5":
+      return `gpt-5.5-${effort === "xhigh" ? "extra-high" : effort === "none" ? "medium" : effort}`;
+    case "gpt-5.4":
+      return `gpt-5.4-${effort === "none" ? "medium" : effort}${fast}`;
+    case "gpt-5.3-codex":
+      return effort === "medium"
+        ? `gpt-5.3-codex${fast}`
+        : `gpt-5.3-codex-${effort === "none" ? "low" : effort}${fast}`;
+    case "gpt-5.3-codex-spark":
+      return effort === "medium"
+        ? "gpt-5.3-codex-spark-preview"
+        : `gpt-5.3-codex-spark-preview-${effort === "none" ? "low" : effort}`;
+    case "gpt-5.2":
+      return effort === "medium"
+        ? `gpt-5.2${fast}`
+        : `gpt-5.2-${effort === "none" ? "low" : effort}${fast}`;
+    case "gpt-5.2-codex":
+      return effort === "medium"
+        ? `gpt-5.2-codex${fast}`
+        : `gpt-5.2-codex-${effort === "none" ? "low" : effort}${fast}`;
+    case "gpt-5.1-codex-max":
+      return `gpt-5.1-codex-max-${effort === "none" ? "medium" : effort}${fast}`;
+    case "gpt-5.1-codex-mini":
+      return effort === "medium" || effort === "xhigh" || effort === "max" || effort === "none"
+        ? "gpt-5.1-codex-mini"
+        : `gpt-5.1-codex-mini-${effort}`;
+    case "gpt-5.1":
+      return effort === "medium" || effort === "xhigh" || effort === "max" || effort === "none"
+        ? "gpt-5.1"
+        : `gpt-5.1-${effort}`;
+    case "gpt-5.4-mini":
+    case "gpt-5.4-nano":
+      return `${baseModel}-${effort === "max" ? "xhigh" : effort}`;
+    case "claude-opus-4-7": {
+      const claudeEffort = cursorReasoningSuffix(selections, "high");
+      const thinking = getProviderOptionBooleanSelectionValue(selections, "thinking") ?? true;
+      return `claude-opus-4-7${thinking ? "-thinking" : ""}-${claudeEffort === "none" ? "medium" : claudeEffort}`;
+    }
+    case "claude-opus-4-6": {
+      const claudeEffort = cursorReasoningSuffix(selections, "high");
+      const thinking = getProviderOptionBooleanSelectionValue(selections, "thinking") ?? true;
+      const supportedEffort = claudeEffort === "max" ? "max" : "high";
+      return `claude-4.6-opus-${supportedEffort}${thinking ? "-thinking" : ""}${fast}`;
+    }
+    case "claude-sonnet-4-6": {
+      const thinking = getProviderOptionBooleanSelectionValue(selections, "thinking") ?? false;
+      return `claude-4.6-sonnet-medium${thinking ? "-thinking" : ""}`;
+    }
+    case "claude-opus-4-5": {
+      const thinking = getProviderOptionBooleanSelectionValue(selections, "thinking") ?? true;
+      return `claude-4.5-opus-high${thinking ? "-thinking" : ""}`;
+    }
+    case "claude-sonnet-4-5": {
+      const thinking = getProviderOptionBooleanSelectionValue(selections, "thinking") ?? false;
+      return `claude-4.5-sonnet${thinking ? "-thinking" : ""}`;
+    }
+    case "claude-sonnet-4": {
+      const thinking = getProviderOptionBooleanSelectionValue(selections, "thinking") ?? false;
+      return `claude-4-sonnet${thinking ? "-thinking" : ""}`;
+    }
+  }
   return CURSOR_CLI_LAUNCH_MODEL_ALIASES[baseModel] ?? undefined;
 }
 

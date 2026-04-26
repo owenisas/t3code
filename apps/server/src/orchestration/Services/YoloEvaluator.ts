@@ -8,7 +8,7 @@ export interface YoloEvaluatorInput {
   readonly latestAssistantText: string;
   readonly checkpointSummary: string;
   readonly iteration: number;
-  readonly maxIterations: number;
+  readonly maxIterations: number | null;
   readonly modelSelection: ModelSelection;
 }
 

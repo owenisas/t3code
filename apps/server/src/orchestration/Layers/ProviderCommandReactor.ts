@@ -464,7 +464,7 @@ const make = Effect.gen(function* () {
       const shouldRestartForModelChange = modelChanged && sessionModelSwitch === "unsupported";
       const previousModelSelection = threadModelSelections.get(threadId);
       const shouldRestartForModelSelectionChange =
-        currentProvider === "claudeAgent" &&
+        (currentProvider === "claudeAgent" || currentProvider === "cursor") &&
         requestedModelSelection !== undefined &&
         !Equal.equals(previousModelSelection, requestedModelSelection);
 
@@ -596,7 +596,7 @@ const make = Effect.gen(function* () {
         ? { modelSelection: nextFollowUp.modelSelection }
         : {}),
       runtimeMode: thread.runtimeMode,
-      interactionMode: thread.interactionMode,
+      interactionMode: nextFollowUp.interactionMode ?? thread.interactionMode,
       createdAt: input.createdAt,
     });
   });
@@ -957,30 +957,31 @@ const make = Effect.gen(function* () {
 
       yield* Effect.forEach(
         readModel.threads,
-        (thread) => {
-          const session = thread.session;
-          if (!session) {
-            return Effect.void;
-          }
-          if (session.status !== "running" && session.status !== "starting") {
-            return Effect.void;
-          }
-          if (activeThreadIds.has(thread.id)) {
-            return Effect.void;
-          }
+        (thread) =>
+          Effect.gen(function* () {
+            const session = thread.session;
+            if (!session) {
+              return;
+            }
+            if (session.status !== "running" && session.status !== "starting") {
+              return;
+            }
+            if (activeThreadIds.has(thread.id)) {
+              return;
+            }
 
-          return setThreadSession({
-            threadId: thread.id,
-            session: {
-              ...session,
-              status: "ready",
-              activeTurnId: null,
-              lastError: INTERRUPTED_BY_RESTART_DETAIL,
-              updatedAt: now,
-            },
-            createdAt: now,
-          });
-        },
+            yield* setThreadSession({
+              threadId: thread.id,
+              session: {
+                ...session,
+                status: "ready",
+                activeTurnId: null,
+                lastError: INTERRUPTED_BY_RESTART_DETAIL,
+                updatedAt: now,
+              },
+              createdAt: now,
+            });
+          }),
         { discard: true },
       );
     },

@@ -98,6 +98,7 @@ describe("orchestration projector", () => {
         checkpoints: [],
         queuedFollowUps: [],
         session: null,
+        yoloRun: null,
       },
     ]);
   });

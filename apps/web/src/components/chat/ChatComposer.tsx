@@ -134,6 +134,78 @@ const runtimeModeConfig: Record<
 };
 
 const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
+export type ComposerMode = ProviderInteractionMode | "yolo";
+export type YoloIterationLimit = number | null;
+export type YoloTriggerDelaySeconds = number;
+
+const yoloIterationOptions: ReadonlyArray<{
+  value: string;
+  label: string;
+  description: string;
+  maxIterations: YoloIterationLimit;
+}> = [
+  { value: "3", label: "3 reviews", description: "Short bounded loop.", maxIterations: 3 },
+  { value: "10", label: "10 reviews", description: "Default safety cap.", maxIterations: 10 },
+  { value: "25", label: "25 reviews", description: "Long-running goal.", maxIterations: 25 },
+  {
+    value: "unlimited",
+    label: "Unlimited",
+    description: "Run until complete or stopped.",
+    maxIterations: null,
+  },
+];
+
+function yoloIterationValue(limit: YoloIterationLimit): string {
+  return limit === null ? "unlimited" : String(limit);
+}
+
+function yoloIterationLabel(limit: YoloIterationLimit): string {
+  return (
+    yoloIterationOptions.find((option) => option.maxIterations === limit)?.label ?? "10 reviews"
+  );
+}
+
+const yoloTriggerDelayOptions: ReadonlyArray<{
+  value: string;
+  label: string;
+  description: string;
+  seconds: YoloTriggerDelaySeconds;
+}> = [
+  {
+    value: "0",
+    label: "Immediately",
+    description: "Review as soon as the turn settles.",
+    seconds: 0,
+  },
+  { value: "10", label: "10 sec", description: "Short pause before review.", seconds: 10 },
+  {
+    value: "30",
+    label: "30 sec",
+    description: "Give logs and files a moment to settle.",
+    seconds: 30,
+  },
+  { value: "60", label: "1 min", description: "Wait one minute before each review.", seconds: 60 },
+  { value: "300", label: "5 min", description: "Slow autonomous loop.", seconds: 300 },
+];
+
+function yoloTriggerDelayValue(seconds: YoloTriggerDelaySeconds): string {
+  return String(seconds);
+}
+
+function yoloTriggerDelayLabel(seconds: YoloTriggerDelaySeconds): string {
+  return (
+    yoloTriggerDelayOptions.find((option) => option.seconds === seconds)?.label ?? "Immediately"
+  );
+}
+
+function formatYoloTriggerDelay(seconds: YoloTriggerDelaySeconds): string {
+  return seconds === 0 ? "review immediately" : `review after ${yoloTriggerDelayLabel(seconds)}`;
+}
+
+function formatYoloRunLimit(iteration: number, maxIterations: YoloIterationLimit): string {
+  return maxIterations === null ? `${iteration}/∞` : `${iteration}/${maxIterations}`;
+}
+
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 
@@ -167,13 +239,17 @@ const terminalContextIdListsEqual = (
 
 const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
   showInteractionModeToggle: boolean;
-  interactionMode: ProviderInteractionMode;
+  composerMode: ComposerMode;
   runtimeMode: RuntimeMode;
+  yoloIterationLimit: YoloIterationLimit;
+  yoloTriggerDelaySeconds: YoloTriggerDelaySeconds;
   showPlanToggle: boolean;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
-  onToggleInteractionMode: () => void;
+  onComposerModeChange: (mode: ComposerMode) => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
+  onYoloIterationLimitChange: (limit: YoloIterationLimit) => void;
+  onYoloTriggerDelaySecondsChange: (seconds: YoloTriggerDelaySeconds) => void;
   onTogglePlanSidebar: () => void;
 }) {
   const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
@@ -185,23 +261,119 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 
       {props.showInteractionModeToggle ? (
         <>
-          <Button
-            variant="ghost"
-            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-            size="sm"
-            type="button"
-            onClick={props.onToggleInteractionMode}
-            title={
-              props.interactionMode === "plan"
-                ? "Plan mode — click to return to normal build mode"
-                : "Default mode — click to enter plan mode"
-            }
+          <Select
+            value={props.composerMode}
+            onValueChange={(value) => props.onComposerModeChange(value as ComposerMode)}
           >
-            <BotIcon />
-            <span className="sr-only sm:not-sr-only">
-              {props.interactionMode === "plan" ? "Plan" : "Build"}
-            </span>
-          </Button>
+            <SelectTrigger
+              variant="ghost"
+              size="sm"
+              className="font-medium"
+              aria-label="Composer mode"
+              title="Choose how this message should run"
+            >
+              <BotIcon className="size-4" />
+              <SelectValue>
+                {props.composerMode === "plan"
+                  ? "Plan"
+                  : props.composerMode === "yolo"
+                    ? "YOLO"
+                    : "Build"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup alignItemWithTrigger={false}>
+              <SelectItem value="default" className="min-w-56 py-2">
+                <div className="grid min-w-0 gap-0.5">
+                  <span className="font-medium text-foreground">Build</span>
+                  <span className="text-muted-foreground text-xs leading-4">
+                    Send one normal worker turn.
+                  </span>
+                </div>
+              </SelectItem>
+              <SelectItem value="plan" className="min-w-56 py-2">
+                <div className="grid min-w-0 gap-0.5">
+                  <span className="font-medium text-foreground">Plan</span>
+                  <span className="text-muted-foreground text-xs leading-4">
+                    Ask for a proposed plan first.
+                  </span>
+                </div>
+              </SelectItem>
+              <SelectItem value="yolo" className="min-w-56 py-2">
+                <div className="grid min-w-0 gap-0.5">
+                  <span className="font-medium text-foreground">YOLO</span>
+                  <span className="text-muted-foreground text-xs leading-4">
+                    Keep reviewing and continuing toward the goal.
+                  </span>
+                </div>
+              </SelectItem>
+            </SelectPopup>
+          </Select>
+
+          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+        </>
+      ) : null}
+
+      {props.composerMode === "yolo" ? (
+        <>
+          <Select
+            value={yoloIterationValue(props.yoloIterationLimit)}
+            onValueChange={(value) => {
+              const option = yoloIterationOptions.find((candidate) => candidate.value === value);
+              if (option) props.onYoloIterationLimitChange(option.maxIterations);
+            }}
+          >
+            <SelectTrigger
+              variant="ghost"
+              size="sm"
+              className="font-medium"
+              aria-label="YOLO iteration limit"
+              title="Maximum YOLO reviewer continuations"
+            >
+              <SelectValue>{yoloIterationLabel(props.yoloIterationLimit)}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup alignItemWithTrigger={false}>
+              {yoloIterationOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value} className="min-w-56 py-2">
+                  <div className="grid min-w-0 gap-0.5">
+                    <span className="font-medium text-foreground">{option.label}</span>
+                    <span className="text-muted-foreground text-xs leading-4">
+                      {option.description}
+                    </span>
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+
+          <Select
+            value={yoloTriggerDelayValue(props.yoloTriggerDelaySeconds)}
+            onValueChange={(value) => {
+              const option = yoloTriggerDelayOptions.find((candidate) => candidate.value === value);
+              if (option) props.onYoloTriggerDelaySecondsChange(option.seconds);
+            }}
+          >
+            <SelectTrigger
+              variant="ghost"
+              size="sm"
+              className="font-medium"
+              aria-label="YOLO review trigger delay"
+              title="How long YOLO waits after each worker turn before reviewing"
+            >
+              <SelectValue>{yoloTriggerDelayLabel(props.yoloTriggerDelaySeconds)}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup alignItemWithTrigger={false}>
+              {yoloTriggerDelayOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value} className="min-w-56 py-2">
+                  <div className="grid min-w-0 gap-0.5">
+                    <span className="font-medium text-foreground">{option.label}</span>
+                    <span className="text-muted-foreground text-xs leading-4">
+                      {option.description}
+                    </span>
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
 
           <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
         </>
@@ -412,7 +584,9 @@ export interface ChatComposerProps {
 
   // Mode
   runtimeMode: RuntimeMode;
-  interactionMode: ProviderInteractionMode;
+  composerMode: ComposerMode;
+  yoloIterationLimit: YoloIterationLimit;
+  yoloTriggerDelaySeconds: YoloTriggerDelaySeconds;
 
   // Provider / model
   lockedProvider: ProviderKind | null;
@@ -446,7 +620,6 @@ export interface ChatComposerProps {
   onSteerFollowUp: () => void;
   onEditQueuedFollowUp: (followUpId: string, text: string) => void | Promise<void>;
   onDeleteQueuedFollowUp: (followUpId: string) => void | Promise<void>;
-  onStartYolo: () => void;
   onStopYolo: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -468,6 +641,9 @@ export interface ChatComposerProps {
   toggleInteractionMode: () => void;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
   handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
+  handleComposerModeChange: (mode: ComposerMode) => void;
+  onYoloIterationLimitChange: (limit: YoloIterationLimit) => void;
+  onYoloTriggerDelaySecondsChange: (seconds: YoloTriggerDelaySeconds) => void;
   togglePlanSidebar: () => void;
 
   focusComposer: () => void;
@@ -513,7 +689,9 @@ export const ChatComposer = memo(
       planSidebarLabel,
       planSidebarOpen,
       runtimeMode,
-      interactionMode,
+      composerMode,
+      yoloIterationLimit,
+      yoloTriggerDelaySeconds,
       lockedProvider,
       providerStatuses,
       activeProjectDefaultModelSelection,
@@ -535,7 +713,6 @@ export const ChatComposer = memo(
       onSteerFollowUp,
       onEditQueuedFollowUp,
       onDeleteQueuedFollowUp,
-      onStartYolo,
       onStopYolo,
       onImplementPlanInNewThread,
       onRespondToApproval,
@@ -547,6 +724,9 @@ export const ChatComposer = memo(
       toggleInteractionMode,
       handleRuntimeModeChange,
       handleInteractionModeChange,
+      handleComposerModeChange,
+      onYoloIterationLimitChange,
+      onYoloTriggerDelaySecondsChange,
       togglePlanSidebar,
       focusComposer,
       scheduleComposerFocus,
@@ -850,13 +1030,6 @@ export const ChatComposer = memo(
 
     const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
     const showPlanSidebarToggle = Boolean(activePlan || sidebarProposedPlan || planSidebarOpen);
-    const isYoloActive = activeThread?.yoloRun?.status === "active";
-    const isYoloStartDisabled =
-      isConnecting ||
-      isSendBusy ||
-      isYoloActive ||
-      pendingUserInputs.length > 0 ||
-      Boolean(activePendingApproval);
     const composerFooterActionLayoutKey = useMemo(() => {
       if (activePendingProgress) {
         return `pending:${activePendingProgress.questionIndex}:${activePendingProgress.isLastQuestion}:${activePendingIsResponding}`;
@@ -1904,7 +2077,10 @@ export const ChatComposer = memo(
                     <div className="font-semibold text-amber-500">
                       YOLO {activeThread.yoloRun.status}
                       {activeThread.yoloRun.status === "active"
-                        ? ` · ${activeThread.yoloRun.iteration}/${activeThread.yoloRun.maxIterations}`
+                        ? ` · ${formatYoloRunLimit(
+                            activeThread.yoloRun.iteration,
+                            activeThread.yoloRun.maxIterations,
+                          )} · ${formatYoloTriggerDelay(activeThread.yoloRun.triggerDelaySeconds)}`
                         : ""}
                     </div>
                     <div className="truncate text-muted-foreground">
@@ -1946,9 +2122,11 @@ export const ChatComposer = memo(
                       ? "Type your own answer, or leave this blank to use the selected option"
                       : showPlanFollowUpPrompt && activeProposedPlan
                         ? "Add feedback to refine the plan, or leave this blank to implement it"
-                        : phase === "disconnected"
-                          ? "Ask for follow-up changes or attach images"
-                          : "Ask anything, @tag files/folders, or use / to show available commands"
+                        : composerMode === "yolo"
+                          ? "Enter the ultimate goal for YOLO mode"
+                          : phase === "disconnected"
+                            ? "Ask for follow-up changes or attach images"
+                            : "Ask anything, @tag files/folders, or use / to show available commands"
                 }
                 disabled={isConnecting || isComposerApprovalState}
               />
@@ -1998,18 +2176,19 @@ export const ChatComposer = memo(
                   {isComposerFooterCompact ? (
                     <CompactComposerControlsMenu
                       activePlan={showPlanSidebarToggle}
-                      interactionMode={interactionMode}
+                      composerMode={composerMode}
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
                       runtimeMode={runtimeMode}
+                      yoloIterationLimit={yoloIterationLimit}
+                      yoloTriggerDelaySeconds={yoloTriggerDelaySeconds}
                       showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                       traitsMenuContent={providerTraitsMenuContent}
-                      yoloActive={isYoloActive}
-                      yoloDisabled={isYoloStartDisabled}
-                      onToggleInteractionMode={toggleInteractionMode}
+                      onComposerModeChange={handleComposerModeChange}
                       onTogglePlanSidebar={togglePlanSidebar}
                       onRuntimeModeChange={handleRuntimeModeChange}
-                      onStartYolo={onStartYolo}
+                      onYoloIterationLimitChange={onYoloIterationLimitChange}
+                      onYoloTriggerDelaySecondsChange={onYoloTriggerDelaySecondsChange}
                     />
                   ) : (
                     <>
@@ -2026,26 +2205,19 @@ export const ChatComposer = memo(
                         showInteractionModeToggle={
                           composerProviderControls.showInteractionModeToggle
                         }
-                        interactionMode={interactionMode}
+                        composerMode={composerMode}
                         runtimeMode={runtimeMode}
+                        yoloIterationLimit={yoloIterationLimit}
+                        yoloTriggerDelaySeconds={yoloTriggerDelaySeconds}
                         showPlanToggle={showPlanSidebarToggle}
                         planSidebarLabel={planSidebarLabel}
                         planSidebarOpen={planSidebarOpen}
-                        onToggleInteractionMode={toggleInteractionMode}
+                        onComposerModeChange={handleComposerModeChange}
                         onRuntimeModeChange={handleRuntimeModeChange}
+                        onYoloIterationLimitChange={onYoloIterationLimitChange}
+                        onYoloTriggerDelaySecondsChange={onYoloTriggerDelaySecondsChange}
                         onTogglePlanSidebar={togglePlanSidebar}
                       />
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant={isYoloActive ? "secondary" : "ghost"}
-                        disabled={isYoloStartDisabled}
-                        onClick={onStartYolo}
-                        title="Start YOLO mode with the current composer prompt as the ultimate goal"
-                      >
-                        <BotIcon className="size-3.5" />
-                        YOLO
-                      </Button>
                     </>
                   )}
                 </div>

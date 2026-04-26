@@ -128,7 +128,7 @@ export type ModelCapabilities = typeof ModelCapabilities.Type;
 export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
   codex: "gpt-5.4",
   claudeAgent: "claude-sonnet-4-6",
-  cursor: "auto",
+  cursor: "default",
   opencode: "openai/gpt-5",
 };
 
@@ -168,6 +168,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "claude-haiku-4-5-20251001": "claude-haiku-4-5",
   },
   cursor: {
+    auto: "default",
     composer: "composer-2",
     "composer-1.5": "composer-1.5",
     "composer-1": "composer-1.5",

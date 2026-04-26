@@ -406,25 +406,85 @@ describe("buildCursorDiscoveredModelsFromConfigOptions", () => {
         slug: "gpt-5.4",
         name: "GPT-5.4",
         isCustom: false,
-        capabilities: emptyCapabilities,
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            selectDescriptor("reasoning", "Reasoning", [
+              { id: "low", label: "Low" },
+              { id: "medium", label: "Medium", isDefault: true },
+              { id: "high", label: "High" },
+              { id: "xhigh", label: "Extra High" },
+            ]),
+            selectDescriptor("contextWindow", "Context", [
+              { id: "272k", label: "272K", isDefault: true },
+              { id: "1m", label: "1M" },
+            ]),
+            booleanDescriptor("fastMode", "Fast", false),
+          ],
+        }),
       },
       {
         slug: "claude-sonnet-4-6",
         name: "Sonnet 4.6",
         isCustom: false,
-        capabilities: emptyCapabilities,
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            selectDescriptor("reasoning", "Effort", [
+              { id: "low", label: "Low" },
+              { id: "medium", label: "Medium", isDefault: true },
+              { id: "high", label: "High" },
+              { id: "xhigh", label: "Extra High" },
+              { id: "max", label: "Max" },
+            ]),
+            selectDescriptor("contextWindow", "Context", [
+              { id: "200k", label: "200K", isDefault: true },
+              { id: "1m", label: "1M" },
+            ]),
+            booleanDescriptor("thinking", "Thinking", false),
+            booleanDescriptor("fastMode", "Fast", false),
+          ],
+        }),
       },
       {
         slug: "claude-opus-4-6",
         name: "Opus 4.6",
         isCustom: false,
-        capabilities: emptyCapabilities,
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            selectDescriptor("reasoning", "Effort", [
+              { id: "low", label: "Low" },
+              { id: "medium", label: "Medium" },
+              { id: "high", label: "High", isDefault: true },
+              { id: "xhigh", label: "Extra High" },
+              { id: "max", label: "Max" },
+            ]),
+            selectDescriptor("contextWindow", "Context", [
+              { id: "200k", label: "200K", isDefault: true },
+              { id: "1m", label: "1M" },
+            ]),
+            booleanDescriptor("thinking", "Thinking", true),
+            booleanDescriptor("fastMode", "Fast", false),
+          ],
+        }),
       },
       {
         slug: "gpt-5.3-codex-spark",
         name: "Codex 5.3 Spark",
         isCustom: false,
-        capabilities: emptyCapabilities,
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            selectDescriptor("reasoning", "Reasoning", [
+              { id: "low", label: "Low" },
+              { id: "medium", label: "Medium", isDefault: true },
+              { id: "high", label: "High" },
+              { id: "xhigh", label: "Extra High" },
+            ]),
+            selectDescriptor("contextWindow", "Context", [
+              { id: "272k", label: "272K", isDefault: true },
+              { id: "1m", label: "1M" },
+            ]),
+            booleanDescriptor("fastMode", "Fast", false),
+          ],
+        }),
       },
     ]);
   });
@@ -624,14 +684,17 @@ describe("Cursor parameterized model picker preview gating", () => {
 });
 
 describe("resolveCursorAcpBaseModelId", () => {
-  it("drops bracket traits without rewriting raw ACP model ids", () => {
+  it("normalizes Cursor launch ids onto ACP base ids", () => {
     expect(resolveCursorAcpBaseModelId("gpt-5.4[reasoning=medium,context=272k]")).toBe("gpt-5.4");
-    expect(resolveCursorAcpBaseModelId("gpt-5.4-medium-fast")).toBe("gpt-5.4-medium-fast");
-    expect(resolveCursorAcpBaseModelId("claude-4.6-opus-high-thinking")).toBe(
-      "claude-4.6-opus-high-thinking",
-    );
+    expect(resolveCursorAcpBaseModelId("gpt-5.4-medium-fast")).toBe("gpt-5.4");
+    expect(resolveCursorAcpBaseModelId("claude-4.6-opus-high-thinking")).toBe("claude-opus-4-6");
     expect(resolveCursorAcpBaseModelId("composer-2")).toBe("composer-2");
-    expect(resolveCursorAcpBaseModelId("auto")).toBe("auto");
+    expect(resolveCursorAcpBaseModelId("auto")).toBe("default");
+    expect(resolveCursorAcpBaseModelId("gpt-5.5-high")).toBe("gpt-5.5");
+    expect(resolveCursorAcpBaseModelId("claude-opus-4-7-thinking-high")).toBe("claude-opus-4-7");
+    expect(resolveCursorAcpBaseModelId("gpt-5.3-codex-spark-preview-high")).toBe(
+      "gpt-5.3-codex-spark",
+    );
   });
 });
 
@@ -643,11 +706,40 @@ describe("resolveCursorAcpLaunchModelOverride", () => {
     expect(resolveCursorAcpLaunchModelOverride("gpt-5.3-codex-spark[reasoning=high]")).toBe(
       "gpt-5.3-codex-spark-preview",
     );
+    expect(resolveCursorAcpLaunchModelOverride("gpt-5.3-codex-spark-preview-high")).toBe(
+      "gpt-5.3-codex-spark-preview",
+    );
+    expect(
+      resolveCursorAcpLaunchModelOverride("gpt-5.3-codex-spark", [
+        { id: "reasoning", value: "high" },
+      ]),
+    ).toBe("gpt-5.3-codex-spark-preview-high");
+  });
+
+  it("maps Cursor ACP base ids and options to executable CLI launch presets", () => {
+    expect(
+      resolveCursorAcpLaunchModelOverride("gpt-5.4", [
+        { id: "reasoning", value: "high" },
+        { id: "fastMode", value: true },
+      ]),
+    ).toBe("gpt-5.4-high-fast");
+    expect(resolveCursorAcpLaunchModelOverride("gpt-5.5")).toBe("gpt-5.5-medium");
+    expect(
+      resolveCursorAcpLaunchModelOverride("claude-opus-4-7", [
+        { id: "reasoning", value: "high" },
+        { id: "thinking", value: true },
+      ]),
+    ).toBe("claude-opus-4-7-thinking-high");
+    expect(
+      resolveCursorAcpLaunchModelOverride("claude-opus-4-7", [
+        { id: "reasoning", value: "medium" },
+        { id: "thinking", value: false },
+      ]),
+    ).toBe("claude-opus-4-7-medium");
   });
 
   it("does not override normal ACP model ids", () => {
     expect(resolveCursorAcpLaunchModelOverride("composer-2")).toBeUndefined();
-    expect(resolveCursorAcpLaunchModelOverride("gpt-5.4")).toBeUndefined();
   });
 });
 

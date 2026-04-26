@@ -3,6 +3,7 @@ import {
   IsoDateTime,
   MessageId,
   ModelSelection,
+  ProviderInteractionMode,
   ThreadId,
 } from "@t3tools/contracts";
 import { Context, Option, Schema } from "effect";
@@ -17,6 +18,7 @@ export const ProjectionThreadQueuedFollowUp = Schema.Struct({
   text: Schema.String,
   attachments: Schema.Array(ChatAttachment),
   modelSelection: Schema.NullOr(ModelSelection),
+  interactionMode: Schema.NullOr(ProviderInteractionMode),
   queuedAt: IsoDateTime,
 });
 export type ProjectionThreadQueuedFollowUp = typeof ProjectionThreadQueuedFollowUp.Type;

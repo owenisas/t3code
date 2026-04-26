@@ -1135,6 +1135,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             text: event.payload.followUp.text,
             attachments: [...attachments],
             modelSelection: event.payload.followUp.modelSelection,
+            interactionMode: event.payload.followUp.interactionMode ?? null,
             queuedAt: event.payload.followUp.queuedAt,
           });
           return;
@@ -1151,6 +1152,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             text: event.payload.followUp.text,
             attachments: [...attachments],
             modelSelection: event.payload.followUp.modelSelection,
+            interactionMode: event.payload.followUp.interactionMode ?? null,
             queuedAt: event.payload.followUp.queuedAt,
           });
           return;

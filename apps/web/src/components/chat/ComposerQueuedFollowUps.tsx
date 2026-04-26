@@ -8,6 +8,7 @@ function summarizeQueuedFollowUp(followUp: Thread["queuedFollowUps"][number]): {
   preview: string;
   attachmentLabel: string | null;
   modelLabel: string | null;
+  modeLabel: string | null;
   imageAttachments: Thread["queuedFollowUps"][number]["attachments"];
 } {
   const trimmedText = followUp.text.trim();
@@ -32,11 +33,18 @@ function summarizeQueuedFollowUp(followUp: Thread["queuedFollowUps"][number]): {
   const modelLabel = followUp.modelSelection
     ? `${PROVIDER_DISPLAY_NAMES[followUp.modelSelection.provider]} ${followUp.modelSelection.model}`
     : null;
+  const modeLabel =
+    followUp.interactionMode === "plan"
+      ? "Plan"
+      : followUp.interactionMode === "default"
+        ? "Build"
+        : null;
 
   return {
     preview,
     attachmentLabel,
     modelLabel,
+    modeLabel,
     imageAttachments: followUp.attachments.filter((attachment) => attachment.type === "image"),
   };
 }
@@ -144,10 +152,11 @@ export function ComposerQueuedFollowUps(props: {
                       {summary.preview}
                     </p>
                   )}
-                  {summary.attachmentLabel || summary.modelLabel ? (
+                  {summary.attachmentLabel || summary.modelLabel || summary.modeLabel ? (
                     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground/80">
                       {summary.attachmentLabel ? <span>{summary.attachmentLabel}</span> : null}
                       {summary.modelLabel ? <span>{summary.modelLabel}</span> : null}
+                      {summary.modeLabel ? <span>{summary.modeLabel}</span> : null}
                     </div>
                   ) : null}
                   {summary.imageAttachments.length > 0 ? (
@@ -172,51 +181,52 @@ export function ComposerQueuedFollowUps(props: {
                       )}
                     </div>
                   ) : null}
-                  <div className="mt-2 flex items-center gap-1.5">
-                    {isEditing ? (
-                      <>
-                        <Button
-                          size="xs"
-                          variant="secondary"
-                          disabled={!canSave || isBusy}
-                          onClick={() => void saveEditing(followUp)}
-                        >
-                          <CheckIcon className="size-3.5" />
-                          Save
-                        </Button>
-                        <Button size="xs" variant="ghost" disabled={isBusy} onClick={cancelEditing}>
-                          <XIcon className="size-3.5" />
-                          Cancel
-                        </Button>
-                      </>
-                    ) : (
-                      <>
-                        {props.onEdit ? (
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            disabled={isBusy}
-                            onClick={() => startEditing(followUp)}
-                          >
-                            <PencilIcon className="size-3.5" />
-                            Edit
-                          </Button>
-                        ) : null}
-                        {props.onDelete ? (
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            disabled={isBusy}
-                            onClick={() => void deleteFollowUp(followUp.id)}
-                          >
-                            <Trash2Icon className="size-3.5" />
-                            Delete
-                          </Button>
-                        ) : null}
-                      </>
-                    )}
-                  </div>
+                  {isEditing ? (
+                    <div className="mt-2 flex items-center justify-end gap-1.5">
+                      <Button
+                        size="xs"
+                        variant="secondary"
+                        disabled={!canSave || isBusy}
+                        onClick={() => void saveEditing(followUp)}
+                      >
+                        <CheckIcon className="size-3.5" />
+                        Save
+                      </Button>
+                      <Button size="xs" variant="ghost" disabled={isBusy} onClick={cancelEditing}>
+                        <XIcon className="size-3.5" />
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
+                {!isEditing && (props.onEdit || props.onDelete) ? (
+                  <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                    {props.onEdit ? (
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        disabled={isBusy}
+                        aria-label="Edit queued follow-up"
+                        title="Edit queued follow-up"
+                        onClick={() => startEditing(followUp)}
+                      >
+                        <PencilIcon className="size-3.5" />
+                      </Button>
+                    ) : null}
+                    {props.onDelete ? (
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        disabled={isBusy}
+                        aria-label="Delete queued follow-up"
+                        title="Delete queued follow-up"
+                        onClick={() => void deleteFollowUp(followUp.id)}
+                      >
+                        <Trash2Icon className="size-3.5" />
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </div>
           );

@@ -70,6 +70,16 @@ describe("normalizeModelSlug", () => {
     expect(normalizeModelSlug("gpt-5-codex")).toBe("gpt-5.4");
     expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
     expect(normalizeModelSlug("sonnet", "claudeAgent")).toBe("claude-sonnet-4-6");
+    expect(normalizeModelSlug("auto", "cursor")).toBe("default");
+    expect(normalizeModelSlug("gpt-5.5-high", "cursor")).toBe("gpt-5.5");
+    expect(normalizeModelSlug("claude-opus-4-7-thinking-high", "cursor")).toBe("claude-opus-4-7");
+    expect(normalizeModelSlug("claude-4.6-opus-max-thinking-fast", "cursor")).toBe(
+      "claude-opus-4-6",
+    );
+    expect(normalizeModelSlug("gpt-5.3-codex-spark-preview-high", "cursor")).toBe(
+      "gpt-5.3-codex-spark",
+    );
+    expect(normalizeModelSlug("grok-4-20-thinking", "cursor")).toBe("grok-4-20");
   });
 
   it("returns null for empty or missing values", () => {

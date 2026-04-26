@@ -6,13 +6,16 @@ import {
   type OrchestrationThread,
   ThreadId,
   type TurnId,
+  type YoloRunId,
   YoloReviewId,
 } from "@t3tools/contracts";
-import { Cause, Effect, Layer, Stream } from "effect";
+import { Cause, Deferred, Duration, Effect, Fiber, Layer, Stream, TxRef } from "effect";
+import type { Scope } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import type { OrchestrationDispatchError } from "../Errors.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { YoloEvaluator } from "../Services/YoloEvaluator.ts";
 import { YoloReactor, type YoloReactorShape } from "../Services/YoloReactor.ts";
@@ -20,12 +23,28 @@ import { YoloReactor, type YoloReactorShape } from "../Services/YoloReactor.ts";
 type YoloTriggerEvent = Extract<
   OrchestrationEvent,
   {
-    type: "thread.turn-diff-completed" | "thread.session-set" | "thread.yolo-started";
+    type:
+      | "thread.turn-diff-completed"
+      | "thread.session-set"
+      | "thread.yolo-started"
+      | "thread.yolo-stopped";
   }
 >;
 
+type PendingReviewTask = {
+  readonly key: string;
+  readonly threadId: ThreadId;
+  readonly runId: YoloRunId;
+  readonly turnId: TurnId | null;
+  readonly fiber: Fiber.Fiber<void, unknown>;
+};
+
+type LatestTurnState = NonNullable<OrchestrationThread["latestTurn"]>["state"];
+
 const MAX_TRANSCRIPT_CHARS = 60_000;
 const MAX_MESSAGE_CHARS = 10_000;
+const reviewTaskKey = (input: { readonly runId: YoloRunId; readonly turnId: TurnId | null }) =>
+  `${input.runId}:${input.turnId ?? "no-turn"}`;
 
 const serverCommandId = (tag: string): CommandId =>
   CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
@@ -71,6 +90,54 @@ function latestAssistantTextForTurn(thread: OrchestrationThread, turnId: TurnId 
       (message) => message.role === "assistant" && (turnId === null || message.turnId === turnId),
     );
   return assistant?.text.trim() ?? "";
+}
+
+export function detectYoloTerminalProviderBlocker(latestAssistantText: string): string | null {
+  const normalized = latestAssistantText.trim().toLowerCase();
+  if (normalized.length === 0) return null;
+
+  if (
+    normalized.includes("image in the conversation exceeds the dimension limit") &&
+    normalized.includes("start a new session")
+  ) {
+    return latestAssistantText.trim();
+  }
+
+  if (
+    normalized.includes("no conversation found with session id") ||
+    normalized.includes("conversation not found")
+  ) {
+    return latestAssistantText.trim();
+  }
+
+  if (
+    normalized.includes("no session found") ||
+    normalized.includes("session not found") ||
+    normalized.includes("invalid session")
+  ) {
+    return latestAssistantText.trim();
+  }
+
+  return null;
+}
+
+export function computeYoloReviewRemainingDelayMs(input: {
+  readonly completedAt: string;
+  readonly triggerDelaySeconds: number;
+  readonly nowMs?: number;
+}): number {
+  if (input.triggerDelaySeconds <= 0) {
+    return 0;
+  }
+
+  const completedAtMs = Date.parse(input.completedAt);
+  if (!Number.isFinite(completedAtMs)) {
+    return input.triggerDelaySeconds * 1000;
+  }
+
+  const nowMs = input.nowMs ?? Date.now();
+  const scheduledAtMs = completedAtMs + input.triggerDelaySeconds * 1000;
+  return Math.max(0, scheduledAtMs - nowMs);
 }
 
 function checkpointSummary(thread: OrchestrationThread, turnId: TurnId | null): string {
@@ -119,10 +186,69 @@ function formatReviewerFollowUp(input: {
   ].join("\n");
 }
 
-const makeYoloReactor = Effect.gen(function* () {
+function isReviewableTurnState(
+  state: LatestTurnState,
+): state is "completed" | "error" | "interrupted" {
+  return state === "completed" || state === "error" || state === "interrupted";
+}
+
+const makeYoloReactor: Effect.Effect<
+  YoloReactorShape,
+  never,
+  Scope.Scope | OrchestrationEngineService | YoloEvaluator | ServerSettingsService
+> = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const evaluator = yield* YoloEvaluator;
   const serverSettingsService = yield* ServerSettingsService;
+  const currentIsoTime = Effect.sync(() => new Date().toISOString());
+  const pendingReviewCount = yield* TxRef.make(0);
+  const pendingReviewTasks = new Map<string, PendingReviewTask>();
+
+  const waitForPendingReviews = TxRef.get(pendingReviewCount).pipe(
+    Effect.tap((count) => (count > 0 ? Effect.txRetry : Effect.void)),
+    Effect.tx,
+  );
+
+  const releasePendingReviewTask = (key: string) =>
+    Effect.sync(() => {
+      const task = pendingReviewTasks.get(key);
+      if (!task) {
+        return false;
+      }
+      pendingReviewTasks.delete(key);
+      return true;
+    }).pipe(
+      Effect.flatMap((didRelease) =>
+        didRelease
+          ? TxRef.update(pendingReviewCount, (count) => Math.max(0, count - 1)).pipe(Effect.tx)
+          : Effect.void,
+      ),
+    );
+
+  const cancelPendingReviewsForRun = (input: {
+    readonly threadId: ThreadId;
+    readonly runId: YoloRunId;
+  }) =>
+    Effect.forEach(
+      Array.from(pendingReviewTasks.values()).filter(
+        (task) => task.threadId === input.threadId && task.runId === input.runId,
+      ),
+      (task) =>
+        Effect.sync(() => {
+          task.fiber.interruptUnsafe();
+        }),
+      { discard: true },
+    );
+
+  const logTaskFailure = (eventType: YoloTriggerEvent["type"], cause: Cause.Cause<unknown>) => {
+    if (Cause.hasInterruptsOnly(cause)) {
+      return Effect.void;
+    }
+    return Effect.logWarning("yolo reactor failed to process event", {
+      eventType,
+      cause: Cause.pretty(cause),
+    });
+  };
 
   const appendActivity = (input: {
     readonly threadId: ThreadId;
@@ -193,22 +319,25 @@ const makeYoloReactor = Effect.gen(function* () {
   const reviewThread = Effect.fn("YoloReactor.reviewThread")(function* (input: {
     readonly threadId: ThreadId;
     readonly turnId: TurnId | null;
-    readonly createdAt: string;
+    readonly runId: YoloRunId;
   }) {
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find((entry) => entry.id === input.threadId);
     if (!thread || thread.deletedAt !== null) return;
     const run = thread.yoloRun;
     if (!run || run.status !== "active") return;
+    if (run.id !== input.runId) return;
     if (input.turnId !== null && run.lastReview?.turnId === input.turnId) return;
     if (thread.session?.status === "running") return;
 
-    if (run.iteration >= run.maxIterations) {
+    const hasIterationLimit = run.maxIterations !== null;
+    if (hasIterationLimit && run.iteration >= run.maxIterations) {
+      const createdAt = yield* currentIsoTime;
       yield* completeWithFailure({
         thread,
         turnId: input.turnId,
         detail: `YOLO stopped after reaching the ${run.maxIterations}-iteration limit.`,
-        createdAt: input.createdAt,
+        createdAt,
       });
       return;
     }
@@ -220,13 +349,25 @@ const makeYoloReactor = Effect.gen(function* () {
       }) ?? process.cwd();
     const settings = yield* serverSettingsService.getSettings;
     const iteration = run.iteration + 1;
+    const latestAssistantText = latestAssistantTextForTurn(thread, input.turnId);
+    const terminalProviderBlocker = detectYoloTerminalProviderBlocker(latestAssistantText);
+    if (terminalProviderBlocker !== null) {
+      const createdAt = yield* currentIsoTime;
+      yield* completeWithFailure({
+        thread,
+        turnId: input.turnId,
+        detail: `Provider returned a terminal continuation blocker: ${terminalProviderBlocker}`,
+        createdAt,
+      });
+      return;
+    }
 
     const result = yield* evaluator
       .evaluate({
         cwd,
         goal: run.goal,
         transcript: buildTranscript(thread.messages),
-        latestAssistantText: latestAssistantTextForTurn(thread, input.turnId),
+        latestAssistantText,
         checkpointSummary: checkpointSummary(thread, input.turnId),
         iteration,
         maxIterations: run.maxIterations,
@@ -234,18 +375,31 @@ const makeYoloReactor = Effect.gen(function* () {
       })
       .pipe(
         Effect.catchCause((cause) =>
-          completeWithFailure({
-            thread,
-            turnId: input.turnId,
-            detail: Cause.pretty(cause),
-            createdAt: input.createdAt,
-          }).pipe(Effect.as(null)),
+          Effect.gen(function* () {
+            const createdAt = yield* currentIsoTime;
+            yield* completeWithFailure({
+              thread,
+              turnId: input.turnId,
+              detail: Cause.pretty(cause),
+              createdAt,
+            });
+            return null;
+          }),
         ),
       );
     if (result === null) return;
 
+    const latestReadModel = yield* orchestrationEngine.getReadModel();
+    const activeThread = latestReadModel.threads.find((entry) => entry.id === input.threadId);
+    const activeRun = activeThread?.yoloRun;
+    if (!activeThread || activeThread.deletedAt !== null) return;
+    if (!activeRun || activeRun.status !== "active" || activeRun.id !== input.runId) return;
+    if (input.turnId !== null && activeRun.lastReview?.turnId === input.turnId) return;
+    if (activeThread.session?.status === "running") return;
+
     const reachedGoal = result.goalReached;
-    const hitIterationLimit = !reachedGoal && iteration >= run.maxIterations;
+    const hitIterationLimit =
+      !reachedGoal && activeRun.maxIterations !== null && iteration >= activeRun.maxIterations;
     const completedStatus = reachedGoal ? "completed" : hitIterationLimit ? "failed" : "active";
     const reviewNote =
       result.reviewNote.trim() ||
@@ -255,17 +409,18 @@ const makeYoloReactor = Effect.gen(function* () {
     const nextPrompt = result.nextPrompt.trim();
     const missing = result.missing.map((entry) => entry.trim()).filter(Boolean);
     const failureDetail = hitIterationLimit
-      ? `YOLO reached the ${run.maxIterations}-iteration limit before the reviewer marked the goal complete.`
+      ? `YOLO reached the ${activeRun.maxIterations}-iteration limit before the reviewer marked the goal complete.`
       : null;
+    const reviewedAt = yield* currentIsoTime;
 
     yield* orchestrationEngine.dispatch({
       type: "thread.yolo.review.complete",
       commandId: serverCommandId("yolo-review-complete"),
-      threadId: thread.id,
+      threadId: activeThread.id,
       review: {
         id: YoloReviewId.make(crypto.randomUUID()),
-        runId: run.id,
-        threadId: thread.id,
+        runId: activeRun.id,
+        threadId: activeThread.id,
         turnId: input.turnId,
         iteration,
         outcome: reachedGoal ? "complete" : hitIterationLimit ? "failed" : "continue",
@@ -274,14 +429,14 @@ const makeYoloReactor = Effect.gen(function* () {
         nextPrompt: reachedGoal || hitIterationLimit ? null : nextPrompt,
         reviewNote,
         error: failureDetail,
-        createdAt: input.createdAt,
+        createdAt: reviewedAt,
       },
       completedStatus,
-      updatedAt: input.createdAt,
+      updatedAt: reviewedAt,
     });
 
     yield* appendActivity({
-      threadId: thread.id,
+      threadId: activeThread.id,
       tone: reachedGoal ? "info" : hitIterationLimit ? "error" : "info",
       kind: reachedGoal
         ? "yolo.review.complete"
@@ -295,16 +450,17 @@ const makeYoloReactor = Effect.gen(function* () {
           : "YOLO reviewer requested follow-up",
       detail: failureDetail ? `${reviewNote}\n\n${failureDetail}` : reviewNote,
       turnId: input.turnId,
-      createdAt: input.createdAt,
+      createdAt: reviewedAt,
     });
 
     if (reachedGoal || hitIterationLimit) return;
     if (nextPrompt.length === 0) {
+      const createdAt = yield* currentIsoTime;
       yield* completeWithFailure({
-        thread,
+        thread: activeThread,
         turnId: input.turnId,
         detail: "YOLO reviewer requested continuation but returned an empty next prompt.",
-        createdAt: input.createdAt,
+        createdAt,
       });
       return;
     }
@@ -312,44 +468,102 @@ const makeYoloReactor = Effect.gen(function* () {
     yield* orchestrationEngine.dispatch({
       type: "thread.turn.start",
       commandId: serverCommandId("yolo-follow-up-dispatch"),
-      threadId: thread.id,
+      threadId: activeThread.id,
       message: {
         messageId: MessageId.make(crypto.randomUUID()),
         role: "user",
         text: formatReviewerFollowUp({
-          goal: run.goal,
+          goal: activeRun.goal,
           missing,
           nextPrompt,
         }),
         attachments: [],
         origin: "yolo-reviewer",
       },
-      modelSelection: thread.modelSelection,
-      runtimeMode: thread.runtimeMode,
-      interactionMode: thread.interactionMode,
-      createdAt: input.createdAt,
+      modelSelection: activeThread.modelSelection,
+      runtimeMode: activeThread.runtimeMode,
+      interactionMode: activeThread.interactionMode,
+      createdAt: reviewedAt,
     });
   });
 
-  const processEvent = (event: YoloTriggerEvent) => {
+  const scheduleReview = Effect.fn("YoloReactor.scheduleReview")(function* (input: {
+    readonly eventType: YoloTriggerEvent["type"];
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId | null;
+    readonly runId: YoloRunId;
+    readonly triggerDelaySeconds: number;
+    readonly completedAt: string;
+  }) {
+    const key = reviewTaskKey({
+      runId: input.runId,
+      turnId: input.turnId,
+    });
+    if (pendingReviewTasks.has(key)) {
+      return;
+    }
+
+    const remainingDelayMs = computeYoloReviewRemainingDelayMs({
+      completedAt: input.completedAt,
+      triggerDelaySeconds: input.triggerDelaySeconds,
+      nowMs: Date.now(),
+    });
+    const startSignal = yield* Deferred.make<void>();
+    const fiber = yield* Deferred.await(startSignal).pipe(
+      Effect.flatMap(() =>
+        remainingDelayMs > 0 ? Effect.sleep(Duration.millis(remainingDelayMs)) : Effect.void,
+      ),
+      Effect.flatMap(() =>
+        reviewThread({
+          threadId: input.threadId,
+          turnId: input.turnId,
+          runId: input.runId,
+        }),
+      ),
+      Effect.catchCause((cause) => logTaskFailure(input.eventType, cause)),
+      Effect.ensuring(releasePendingReviewTask(key)),
+      Effect.forkScoped,
+    );
+
+    pendingReviewTasks.set(key, {
+      key,
+      threadId: input.threadId,
+      runId: input.runId,
+      turnId: input.turnId,
+      fiber,
+    });
+    yield* TxRef.update(pendingReviewCount, (count) => count + 1).pipe(Effect.tx);
+    yield* Deferred.succeed(startSignal, undefined);
+  });
+
+  const processEvent = (
+    event: YoloTriggerEvent,
+  ): Effect.Effect<void, OrchestrationDispatchError, Scope.Scope> => {
     if (event.type === "thread.yolo-started") {
       return Effect.gen(function* () {
         const readModel = yield* orchestrationEngine.getReadModel();
         const thread = readModel.threads.find((entry) => entry.id === event.payload.threadId);
         const latestTurn = thread?.latestTurn;
-        if (
-          !latestTurn ||
-          (latestTurn.state !== "completed" &&
-            latestTurn.state !== "error" &&
-            latestTurn.state !== "interrupted")
-        ) {
+        if (!latestTurn || !isReviewableTurnState(latestTurn.state)) {
           return;
         }
-        yield* reviewThread({
+        if (!latestTurn.completedAt || latestTurn.completedAt <= event.payload.run.startedAt) {
+          return;
+        }
+        yield* scheduleReview({
+          eventType: event.type,
           threadId: event.payload.threadId,
           turnId: latestTurn.turnId,
-          createdAt: latestTurn.completedAt ?? event.occurredAt,
+          runId: event.payload.run.id,
+          triggerDelaySeconds: event.payload.run.triggerDelaySeconds,
+          completedAt: latestTurn.completedAt,
         });
+      });
+    }
+    if (event.type === "thread.yolo-stopped") {
+      return cancelPendingReviewsForRun({
+        threadId: event.payload.threadId,
+        runId: event.payload.runId,
       });
     }
     if (event.type === "thread.session-set") {
@@ -364,6 +578,10 @@ const makeYoloReactor = Effect.gen(function* () {
         const readModel = yield* orchestrationEngine.getReadModel();
         const thread = readModel.threads.find((entry) => entry.id === event.payload.threadId);
         if (!thread?.yoloRun || thread.yoloRun.status !== "active") return;
+        yield* cancelPendingReviewsForRun({
+          threadId: thread.id,
+          runId: thread.yoloRun.id,
+        });
         yield* completeWithFailure({
           thread,
           turnId: thread.latestTurn?.turnId ?? null,
@@ -374,23 +592,24 @@ const makeYoloReactor = Effect.gen(function* () {
         });
       });
     }
-    return reviewThread({
-      threadId: event.payload.threadId,
-      turnId: event.payload.turnId,
-      createdAt: event.payload.completedAt,
+    return Effect.gen(function* () {
+      const readModel = yield* orchestrationEngine.getReadModel();
+      const thread = readModel.threads.find((entry) => entry.id === event.payload.threadId);
+      const run = thread?.yoloRun?.status === "active" ? thread.yoloRun : null;
+      if (!run) return;
+      yield* scheduleReview({
+        eventType: event.type,
+        threadId: event.payload.threadId,
+        turnId: event.payload.turnId,
+        runId: run.id,
+        triggerDelaySeconds: run.triggerDelaySeconds,
+        completedAt: event.payload.completedAt,
+      });
     });
   };
 
   const worker = yield* makeDrainableWorker((event: YoloTriggerEvent) =>
-    processEvent(event).pipe(
-      Effect.catchCause((cause) => {
-        if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause);
-        return Effect.logWarning("yolo reactor failed to process event", {
-          eventType: event.type,
-          cause: Cause.pretty(cause),
-        });
-      }),
-    ),
+    processEvent(event).pipe(Effect.catchCause((cause) => logTaskFailure(event.type, cause))),
   );
 
   const start: YoloReactorShape["start"] = Effect.fn("YoloReactor.start")(function* () {
@@ -401,7 +620,8 @@ const makeYoloReactor = Effect.gen(function* () {
             (event): event is YoloTriggerEvent =>
               event.type === "thread.turn-diff-completed" ||
               event.type === "thread.session-set" ||
-              event.type === "thread.yolo-started",
+              event.type === "thread.yolo-started" ||
+              event.type === "thread.yolo-stopped",
           ),
         ),
         worker.enqueue,
@@ -433,7 +653,7 @@ const makeYoloReactor = Effect.gen(function* () {
 
   return {
     start,
-    drain: worker.drain,
+    drain: Effect.all([worker.drain, waitForPendingReviews], { discard: true }),
   } satisfies YoloReactorShape;
 });
 

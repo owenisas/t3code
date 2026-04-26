@@ -228,6 +228,51 @@ export function isClaudeUltrathinkPrompt(text: string | null | undefined): boole
   return typeof text === "string" && /\bultrathink\b/i.test(text);
 }
 
+function normalizeCursorModelSlug(model: string): string {
+  if (model === "auto") {
+    return "default";
+  }
+  if (model === "composer-2-fast") {
+    return "composer-2";
+  }
+  if (model.startsWith("gpt-5.3-codex-spark-preview")) {
+    return "gpt-5.3-codex-spark";
+  }
+  if (model === "grok-4-20-thinking") {
+    return "grok-4-20";
+  }
+
+  const exactFamilies: ReadonlyArray<readonly [RegExp, string]> = [
+    [/^gpt-5\.5(?:-(?:medium|high|extra-high))?$/, "gpt-5.5"],
+    [/^gpt-5\.4(?:-(?:low|medium|high|xhigh)(?:-fast)?)?$/, "gpt-5.4"],
+    [/^gpt-5\.4-mini(?:-(?:none|low|medium|high|xhigh))?$/, "gpt-5.4-mini"],
+    [/^gpt-5\.4-nano(?:-(?:none|low|medium|high|xhigh))?$/, "gpt-5.4-nano"],
+    [/^gpt-5\.3-codex(?:-(?:low|high|xhigh|fast))(?:-fast)?$/, "gpt-5.3-codex"],
+    [/^gpt-5\.2-codex(?:-(?:low|high|xhigh|fast))(?:-fast)?$/, "gpt-5.2-codex"],
+    [/^gpt-5\.2(?:-(?:low|high|xhigh|fast))(?:-fast)?$/, "gpt-5.2"],
+    [/^gpt-5\.1-codex-max(?:-(?:low|medium|high|xhigh))(?:-fast)?$/, "gpt-5.1-codex-max"],
+    [/^gpt-5\.1-codex-mini(?:-(?:low|high))?$/, "gpt-5.1-codex-mini"],
+    [/^gpt-5\.1(?:-(?:low|high))?$/, "gpt-5.1"],
+    [
+      /^claude-opus-4-7(?:-(?:low|medium|high|xhigh|max|thinking-(?:low|medium|high|xhigh|max)))?$/,
+      "claude-opus-4-7",
+    ],
+    [/^claude-4\.6-opus(?:-(?:high|max)(?:-thinking)?(?:-fast)?)?$/, "claude-opus-4-6"],
+    [/^claude-4\.6-sonnet(?:-medium(?:-thinking)?)?$/, "claude-sonnet-4-6"],
+    [/^claude-4\.5-opus(?:-high(?:-thinking)?)?$/, "claude-opus-4-5"],
+    [/^claude-4\.5-sonnet(?:-thinking)?$/, "claude-sonnet-4-5"],
+    [/^claude-4-sonnet(?:-thinking)?$/, "claude-sonnet-4"],
+  ];
+
+  for (const [pattern, canonical] of exactFamilies) {
+    if (pattern.test(model)) {
+      return canonical;
+    }
+  }
+
+  return model;
+}
+
 export function normalizeModelSlug(
   model: string | null | undefined,
   provider: ProviderKind = "codex",
@@ -245,7 +290,8 @@ export function normalizeModelSlug(
   const aliased = Object.prototype.hasOwnProperty.call(aliases, trimmed)
     ? aliases[trimmed]
     : undefined;
-  return typeof aliased === "string" ? aliased : trimmed;
+  const normalized = typeof aliased === "string" ? aliased : trimmed;
+  return provider === "cursor" ? normalizeCursorModelSlug(normalized) : normalized;
 }
 
 export function resolveSelectableModel(

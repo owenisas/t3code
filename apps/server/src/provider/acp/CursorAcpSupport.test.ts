@@ -10,8 +10,8 @@ const parameterizedGpt54ConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConf
     name: "Model",
     category: "model",
     type: "select",
-    currentValue: "gpt-5.4-medium-fast",
-    options: [{ value: "gpt-5.4-medium-fast", name: "GPT-5.4" }],
+    currentValue: "gpt-5.4",
+    options: [{ value: "gpt-5.4", name: "GPT-5.4" }],
   },
   {
     id: "reasoning",
@@ -131,10 +131,45 @@ describe("applyCursorAcpModelSelection", () => {
     );
 
     expect(calls).toEqual([
-      { type: "model", value: "gpt-5.4-medium-fast" },
+      { type: "model", value: "gpt-5.4" },
       { type: "config", configId: "reasoning", value: "extra-high" },
       { type: "config", configId: "context", value: "1m" },
       { type: "config", configId: "fast", value: "true" },
+    ]);
+  });
+
+  it("normalizes legacy Cursor auto and launch-style model ids before setModel", async () => {
+    const calls: Array<{ readonly type: "model"; readonly value: string }> = [];
+
+    const runtime = {
+      getConfigOptions: Effect.succeed([] as ReadonlyArray<EffectAcpSchema.SessionConfigOption>),
+      setModel: (value: string) =>
+        Effect.sync(() => {
+          calls.push({ type: "model", value });
+        }),
+      setConfigOption: () => Effect.void,
+    };
+
+    await Effect.runPromise(
+      applyCursorAcpModelSelection({
+        runtime,
+        model: "auto",
+        selections: undefined,
+        mapError: ({ step, cause }) => new Error(`${step}: ${cause.message}`),
+      }),
+    );
+    await Effect.runPromise(
+      applyCursorAcpModelSelection({
+        runtime,
+        model: "claude-opus-4-7-thinking-high",
+        selections: undefined,
+        mapError: ({ step, cause }) => new Error(`${step}: ${cause.message}`),
+      }),
+    );
+
+    expect(calls).toEqual([
+      { type: "model", value: "default" },
+      { type: "model", value: "claude-opus-4-7" },
     ]);
   });
 

@@ -381,13 +381,9 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
             ? [String((entry.params as Record<string, unknown>).configId)]
             : [],
         );
-        assert.deepStrictEqual(configIdsAfterStart, [
-          "model",
-          "reasoning",
-          "context",
-          "fast",
-          "mode",
-        ]);
+        assert.deepStrictEqual(configIdsAfterStart, ["reasoning", "context", "fast", "mode"]);
+        const argvRunsAfterStart = yield* Effect.promise(() => readArgvLog(argvLogPath));
+        assert.deepStrictEqual(argvRunsAfterStart[0], ["--model", "gpt-5.4-xhigh-fast", "acp"]);
 
         yield* adapter.sendTurn({
           threadId,
@@ -405,7 +401,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
             ? [String((entry.params as Record<string, unknown>).configId)]
             : [],
         );
-        assert.deepStrictEqual(finalConfigIds, ["model", "reasoning", "context", "fast", "mode"]);
+        assert.deepStrictEqual(finalConfigIds, ["reasoning", "context", "fast", "mode"]);
         assert.equal(finalRequests.filter((entry) => entry.method === "session/prompt").length, 1);
       }),
   );

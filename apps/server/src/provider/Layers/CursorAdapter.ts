@@ -473,7 +473,10 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
 
           const resumeSessionId = parseCursorResume(input.resumeCursor)?.sessionId;
           const launchModelOverride = cursorModelSelection?.model
-            ? resolveCursorAcpLaunchModelOverride(cursorModelSelection.model)
+            ? resolveCursorAcpLaunchModelOverride(
+                cursorModelSelection.model,
+                cursorModelSelection.options,
+              )
             : undefined;
           const acpNativeLoggers = makeAcpNativeLoggers({
             nativeEventLogger,
@@ -1048,7 +1051,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session", turnSteer: "unsupported" },
+      capabilities: { sessionModelSwitch: "unsupported", turnSteer: "unsupported" },
       startSession,
       sendTurn,
       steerTurn,

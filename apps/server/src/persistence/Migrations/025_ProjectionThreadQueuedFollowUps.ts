@@ -12,6 +12,7 @@ export default Effect.gen(function* () {
       text TEXT NOT NULL,
       attachments_json TEXT NOT NULL,
       model_selection_json TEXT,
+      interaction_mode TEXT,
       queued_at TEXT NOT NULL
     )
   `;

@@ -43,6 +43,7 @@ const makeProjectionThreadQueuedFollowUpRepository = Effect.gen(function* () {
           text,
           attachments_json,
           model_selection_json,
+          interaction_mode,
           queued_at
         )
         VALUES (
@@ -52,6 +53,7 @@ const makeProjectionThreadQueuedFollowUpRepository = Effect.gen(function* () {
           ${row.text},
           ${JSON.stringify(row.attachments)},
           ${row.modelSelection ? JSON.stringify(row.modelSelection) : null},
+          ${row.interactionMode},
           ${row.queuedAt}
         )
         ON CONFLICT (follow_up_id)
@@ -61,6 +63,7 @@ const makeProjectionThreadQueuedFollowUpRepository = Effect.gen(function* () {
           text = excluded.text,
           attachments_json = excluded.attachments_json,
           model_selection_json = excluded.model_selection_json,
+          interaction_mode = excluded.interaction_mode,
           queued_at = excluded.queued_at
       `,
   });
@@ -77,6 +80,7 @@ const makeProjectionThreadQueuedFollowUpRepository = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           model_selection_json AS "modelSelection",
+          interaction_mode AS "interactionMode",
           queued_at AS "queuedAt"
         FROM projection_thread_queued_follow_ups
         WHERE message_id = ${messageId}
@@ -95,6 +99,7 @@ const makeProjectionThreadQueuedFollowUpRepository = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           model_selection_json AS "modelSelection",
+          interaction_mode AS "interactionMode",
           queued_at AS "queuedAt"
         FROM projection_thread_queued_follow_ups
         WHERE thread_id = ${threadId}
@@ -155,6 +160,7 @@ const makeProjectionThreadQueuedFollowUpRepository = Effect.gen(function* () {
           text: value.text,
           attachments: value.attachments,
           modelSelection: value.modelSelection,
+          interactionMode: value.interactionMode,
           queuedAt: value.queuedAt,
         })),
       ),
@@ -176,6 +182,7 @@ const makeProjectionThreadQueuedFollowUpRepository = Effect.gen(function* () {
           text: row.text,
           attachments: row.attachments,
           modelSelection: row.modelSelection,
+          interactionMode: row.interactionMode,
           queuedAt: row.queuedAt,
         })),
       ),

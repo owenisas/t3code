@@ -328,6 +328,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               queuedAt: "2026-02-24T00:00:04.500Z",
             },
           ],
+          yoloRun: null,
           forkOrigin: null,
           createdAt: "2026-02-24T00:00:02.000Z",
           updatedAt: "2026-02-24T00:00:03.000Z",
@@ -337,6 +338,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             {
               id: asMessageId("message-1"),
               role: "assistant",
+              origin: "human",
               text: "hello from projection",
               turnId: asTurnId("turn-1"),
               streaming: false,

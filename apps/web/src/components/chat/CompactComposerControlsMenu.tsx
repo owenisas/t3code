@@ -1,6 +1,7 @@
-import { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
+import { RuntimeMode } from "@t3tools/contracts";
 import { memo, type ReactNode } from "react";
-import { BotIcon, EllipsisIcon, ListTodoIcon } from "lucide-react";
+import { EllipsisIcon, ListTodoIcon } from "lucide-react";
+import type { ComposerMode, YoloIterationLimit, YoloTriggerDelaySeconds } from "./ChatComposer";
 import { Button } from "../ui/button";
 import {
   Menu,
@@ -14,18 +15,19 @@ import {
 
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   activePlan: boolean;
-  interactionMode: ProviderInteractionMode;
+  composerMode: ComposerMode;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
   runtimeMode: RuntimeMode;
+  yoloIterationLimit: YoloIterationLimit;
+  yoloTriggerDelaySeconds: YoloTriggerDelaySeconds;
   showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
-  yoloDisabled: boolean;
-  yoloActive: boolean;
-  onToggleInteractionMode: () => void;
+  onComposerModeChange: (mode: ComposerMode) => void;
   onTogglePlanSidebar: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
-  onStartYolo: () => void;
+  onYoloIterationLimitChange: (limit: YoloIterationLimit) => void;
+  onYoloTriggerDelaySecondsChange: (seconds: YoloTriggerDelaySeconds) => void;
 }) {
   return (
     <Menu>
@@ -52,15 +54,59 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
           <>
             <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Mode</div>
             <MenuRadioGroup
-              value={props.interactionMode}
+              value={props.composerMode}
               onValueChange={(value) => {
-                if (!value || value === props.interactionMode) return;
-                props.onToggleInteractionMode();
+                if (!value || value === props.composerMode) return;
+                props.onComposerModeChange(value as ComposerMode);
               }}
             >
-              <MenuRadioItem value="default">Chat</MenuRadioItem>
+              <MenuRadioItem value="default">Build</MenuRadioItem>
               <MenuRadioItem value="plan">Plan</MenuRadioItem>
+              <MenuRadioItem value="yolo">YOLO</MenuRadioItem>
             </MenuRadioGroup>
+            {props.composerMode === "yolo" ? (
+              <>
+                <MenuDivider />
+                <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
+                  YOLO limit
+                </div>
+                <MenuRadioGroup
+                  value={
+                    props.yoloIterationLimit === null
+                      ? "unlimited"
+                      : String(props.yoloIterationLimit)
+                  }
+                  onValueChange={(value) => {
+                    if (!value) return;
+                    props.onYoloIterationLimitChange(
+                      value === "unlimited" ? null : Number.parseInt(value, 10),
+                    );
+                  }}
+                >
+                  <MenuRadioItem value="3">3 reviews</MenuRadioItem>
+                  <MenuRadioItem value="10">10 reviews</MenuRadioItem>
+                  <MenuRadioItem value="25">25 reviews</MenuRadioItem>
+                  <MenuRadioItem value="unlimited">Unlimited</MenuRadioItem>
+                </MenuRadioGroup>
+                <MenuDivider />
+                <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
+                  YOLO review delay
+                </div>
+                <MenuRadioGroup
+                  value={String(props.yoloTriggerDelaySeconds)}
+                  onValueChange={(value) => {
+                    if (!value) return;
+                    props.onYoloTriggerDelaySecondsChange(Number.parseInt(value, 10));
+                  }}
+                >
+                  <MenuRadioItem value="0">Immediately</MenuRadioItem>
+                  <MenuRadioItem value="10">10 sec</MenuRadioItem>
+                  <MenuRadioItem value="30">30 sec</MenuRadioItem>
+                  <MenuRadioItem value="60">1 min</MenuRadioItem>
+                  <MenuRadioItem value="300">5 min</MenuRadioItem>
+                </MenuRadioGroup>
+              </>
+            ) : null}
             <MenuDivider />
           </>
         ) : null}
@@ -87,11 +133,6 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             </MenuItem>
           </>
         ) : null}
-        <MenuDivider />
-        <MenuItem disabled={props.yoloDisabled} onClick={props.onStartYolo}>
-          <BotIcon className="size-4 shrink-0" />
-          {props.yoloActive ? "YOLO running" : "Start YOLO mode"}
-        </MenuItem>
       </MenuPopup>
     </Menu>
   );

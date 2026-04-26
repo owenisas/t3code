@@ -272,6 +272,9 @@ function mapQueuedFollowUp(
     modelSelection: followUp.modelSelection
       ? normalizeModelSelection(followUp.modelSelection)
       : null,
+    ...(followUp.interactionMode !== undefined
+      ? { interactionMode: followUp.interactionMode }
+      : {}),
     queuedAt: followUp.queuedAt,
   };
 }
@@ -523,6 +526,7 @@ function queuedFollowUpsEqual(
       followUp.messageId === nextFollowUp.messageId &&
       followUp.text === nextFollowUp.text &&
       followUp.modelSelection === nextFollowUp.modelSelection &&
+      followUp.interactionMode === nextFollowUp.interactionMode &&
       followUp.queuedAt === nextFollowUp.queuedAt &&
       followUp.attachments === nextFollowUp.attachments
     );
