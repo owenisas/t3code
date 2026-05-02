@@ -481,7 +481,11 @@ export function deriveWorkLogEntries(
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entries = ordered
-    .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
+    .filter((activity) =>
+      latestTurnId
+        ? activity.turnId === latestTurnId || isThreadScopedErrorActivity(activity)
+        : true,
+    )
     .filter((activity) => activity.kind !== "tool.started")
     .filter((activity) => activity.kind !== "task.started")
     .filter((activity) => activity.kind !== "context-window.updated")
@@ -491,6 +495,10 @@ export function deriveWorkLogEntries(
   return collapseDerivedWorkLogEntries(entries).map(
     ({ activityKind: _activityKind, collapseKey: _collapseKey, ...entry }) => entry,
   );
+}
+
+function isThreadScopedErrorActivity(activity: OrchestrationThreadActivity): boolean {
+  return activity.turnId === null && activity.tone === "error";
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {

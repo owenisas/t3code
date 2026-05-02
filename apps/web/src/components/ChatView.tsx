@@ -2445,14 +2445,14 @@ export default function ChatView(props: ChatViewProps) {
   ]);
 
   const onRevertToTurnCount = useCallback(
-    async (turnCount: number) => {
+    async (turnCount: number): Promise<boolean> => {
       const api = readEnvironmentApi(environmentId);
       const localApi = readLocalApi();
-      if (!api || !localApi || !activeThread || isRevertingCheckpoint) return;
+      if (!api || !localApi || !activeThread || isRevertingCheckpoint) return false;
 
       if (phase === "running" || isSendBusy || isConnecting) {
         setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
-        return;
+        return false;
       }
       const confirmed = await localApi.dialogs.confirm(
         [
@@ -2462,7 +2462,7 @@ export default function ChatView(props: ChatViewProps) {
         ].join("\n"),
       );
       if (!confirmed) {
-        return;
+        return false;
       }
 
       setIsRevertingCheckpoint(true);
@@ -2475,13 +2475,16 @@ export default function ChatView(props: ChatViewProps) {
           turnCount,
           createdAt: new Date().toISOString(),
         });
+        return true;
       } catch (err) {
         setThreadError(
           activeThread.id,
           err instanceof Error ? err.message : "Failed to revert thread state.",
         );
+        return false;
+      } finally {
+        setIsRevertingCheckpoint(false);
       }
-      setIsRevertingCheckpoint(false);
     },
     [
       activeThread,
@@ -3503,6 +3506,8 @@ export default function ChatView(props: ChatViewProps) {
   );
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.
+  const activeThreadSnapshotRef = useRef(activeThread);
+  activeThreadSnapshotRef.current = activeThread;
   const revertTurnCountRef = useRef(revertTurnCountByUserMessageId);
   revertTurnCountRef.current = revertTurnCountByUserMessageId;
   const onRevertToTurnCountRef = useRef(onRevertToTurnCount);
@@ -3584,13 +3589,43 @@ export default function ChatView(props: ChatViewProps) {
       setComposerDraftPrompt,
     ],
   );
-  const onRevertUserMessage = useCallback((messageId: MessageId) => {
-    const targetTurnCount = revertTurnCountRef.current.get(messageId);
-    if (typeof targetTurnCount !== "number") {
-      return;
-    }
-    void onRevertToTurnCountRef.current(targetTurnCount);
-  }, []);
+  const onRevertUserMessage = useCallback(
+    (messageId: MessageId) => {
+      const targetTurnCount = revertTurnCountRef.current.get(messageId);
+      if (typeof targetTurnCount !== "number") {
+        return;
+      }
+      const sourceMessage = activeThreadSnapshotRef.current?.messages.find(
+        (message) => message.id === messageId,
+      );
+      if (!sourceMessage || sourceMessage.role !== "user") {
+        void onRevertToTurnCountRef.current(targetTurnCount);
+        return;
+      }
+
+      void onRevertToTurnCountRef.current(targetTurnCount).then(async (accepted) => {
+        if (!accepted) return;
+
+        promptRef.current = sourceMessage.text;
+        clearComposerDraftContent(composerDraftTarget);
+        setComposerDraftPrompt(composerDraftTarget, sourceMessage.text);
+        composerRef.current?.resetCursorState({ cursor: sourceMessage.text.length });
+        const clonedImages = await cloneUserMessageImagesForComposer(sourceMessage);
+        if (clonedImages.length > 0) {
+          addComposerDraftImages(composerDraftTarget, clonedImages);
+        }
+        scheduleComposerFocus();
+      });
+    },
+    [
+      addComposerDraftImages,
+      clearComposerDraftContent,
+      composerRef,
+      composerDraftTarget,
+      scheduleComposerFocus,
+      setComposerDraftPrompt,
+    ],
+  );
 
   // Empty state: no active thread
   if (!activeThread) {

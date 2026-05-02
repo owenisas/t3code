@@ -674,6 +674,34 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["turn-2"]);
   });
 
+  it("keeps thread-scoped error entries when filtering to the latest turn", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "revert-failed",
+        kind: "checkpoint.revert.failed",
+        summary: "Checkpoint revert failed",
+        tone: "error",
+        payload: { detail: "Filesystem checkpoint is unavailable." },
+      }),
+      makeActivity({
+        id: "old-turn-tool",
+        turnId: "turn-1",
+        summary: "Ran command",
+        kind: "tool.completed",
+      }),
+      makeActivity({
+        id: "latest-turn-tool",
+        turnId: "turn-2",
+        summary: "Read file",
+        kind: "tool.completed",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, TurnId.make("turn-2"));
+    expect(entries.map((entry) => entry.id)).toEqual(["revert-failed", "latest-turn-tool"]);
+    expect(entries[0]?.detail).toBe("Filesystem checkpoint is unavailable.");
+  });
+
   it("omits checkpoint captured info entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
