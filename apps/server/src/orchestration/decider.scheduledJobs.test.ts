@@ -86,6 +86,47 @@ function makeReadModel(job: ScheduledJob = makeJob()): OrchestrationReadModel {
 }
 
 describe("decideOrchestrationCommand scheduled jobs", () => {
+  it("preserves Cursor provider selections when creating jobs", async () => {
+    const event = expectSingleEvent(
+      await Effect.runPromise(
+        decideOrchestrationCommand({
+          readModel: {
+            ...makeReadModel(),
+            scheduledJobs: [],
+          },
+          command: {
+            type: "scheduled-job.create",
+            commandId: CommandId.make("cmd-job-create-cursor"),
+            jobId,
+            projectId,
+            title: "Cursor review",
+            prompt: "Review with Cursor.",
+            modelSelection: {
+              provider: "cursor",
+              model: "gpt-5.4",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            schedule: {
+              type: "interval",
+              intervalMinutes: 60,
+            },
+            createdAt: "2026-04-16T13:00:00.000Z",
+          },
+        }),
+      ),
+    );
+
+    if (event.type !== "scheduled-job.created") {
+      throw new Error(`Expected scheduled-job.created, got ${event.type}`);
+    }
+    const payload = event.payload as { readonly job: ScheduledJob };
+    expect(payload.job.modelSelection).toEqual({
+      provider: "cursor",
+      model: "gpt-5.4",
+    });
+  });
+
   it("updates editable job fields and recomputes the next run for active jobs", async () => {
     const event = expectSingleEvent(
       await Effect.runPromise(
@@ -118,6 +159,35 @@ describe("decideOrchestrationCommand scheduled jobs", () => {
       },
       nextRunAt: "2026-04-16T14:00:00.000Z",
       updatedAt: "2026-04-16T13:00:00.000Z",
+    });
+  });
+
+  it("preserves Cursor provider selections when updating jobs", async () => {
+    const event = expectSingleEvent(
+      await Effect.runPromise(
+        decideOrchestrationCommand({
+          readModel: makeReadModel(),
+          command: {
+            type: "scheduled-job.update",
+            commandId: CommandId.make("cmd-job-update-cursor"),
+            jobId,
+            modelSelection: {
+              provider: "cursor",
+              model: "claude-opus-4-7",
+            },
+            createdAt: "2026-04-16T13:00:00.000Z",
+          },
+        }),
+      ),
+    );
+
+    if (event.type !== "scheduled-job.updated") {
+      throw new Error(`Expected scheduled-job.updated, got ${event.type}`);
+    }
+    const payload = event.payload as { readonly modelSelection?: ScheduledJob["modelSelection"] };
+    expect(payload.modelSelection).toEqual({
+      provider: "cursor",
+      model: "claude-opus-4-7",
     });
   });
 

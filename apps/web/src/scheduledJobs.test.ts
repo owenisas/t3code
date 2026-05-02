@@ -86,6 +86,24 @@ describe("buildScheduledJobCreateCommand", () => {
     expect(String(command.commandId).length).toBeGreaterThan(0);
     expect(String(command.jobId).length).toBeGreaterThan(0);
   });
+
+  it("preserves non-Codex provider selections", () => {
+    const command = buildScheduledJobCreateCommand({
+      projectId: ProjectId.make("project-1"),
+      title: "Cursor review",
+      prompt: "Review the project with Cursor",
+      modelSelection: { provider: "cursor", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      intervalHours: 6,
+      createdAt: "2026-04-16T12:00:00.000Z",
+    });
+
+    expect(command.modelSelection).toEqual({
+      provider: "cursor",
+      model: "gpt-5.4",
+    });
+  });
 });
 
 describe("scheduled job action command builders", () => {

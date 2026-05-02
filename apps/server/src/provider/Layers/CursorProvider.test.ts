@@ -335,6 +335,7 @@ describe("buildCursorCapabilitiesFromConfigOptions", () => {
       createModelCapabilities({
         optionDescriptors: [
           selectDescriptor("reasoning", "Reasoning", [
+            { id: "none", label: "None" },
             { id: "low", label: "Low" },
             { id: "medium", label: "Medium", isDefault: true },
             { id: "high", label: "High" },
@@ -415,8 +416,8 @@ describe("buildCursorDiscoveredModelsFromConfigOptions", () => {
               { id: "xhigh", label: "Extra High" },
             ]),
             selectDescriptor("contextWindow", "Context", [
-              { id: "272k", label: "272K", isDefault: true },
-              { id: "1m", label: "1M" },
+              { id: "272k", label: "272K" },
+              { id: "1m", label: "1M", isDefault: true },
             ]),
             booleanDescriptor("fastMode", "Fast", false),
           ],
@@ -435,12 +436,7 @@ describe("buildCursorDiscoveredModelsFromConfigOptions", () => {
               { id: "xhigh", label: "Extra High" },
               { id: "max", label: "Max" },
             ]),
-            selectDescriptor("contextWindow", "Context", [
-              { id: "200k", label: "200K", isDefault: true },
-              { id: "1m", label: "1M" },
-            ]),
             booleanDescriptor("thinking", "Thinking", false),
-            booleanDescriptor("fastMode", "Fast", false),
           ],
         }),
       },
@@ -458,8 +454,8 @@ describe("buildCursorDiscoveredModelsFromConfigOptions", () => {
               { id: "max", label: "Max" },
             ]),
             selectDescriptor("contextWindow", "Context", [
-              { id: "200k", label: "200K", isDefault: true },
-              { id: "1m", label: "1M" },
+              { id: "200k", label: "200K" },
+              { id: "1m", label: "1M", isDefault: true },
             ]),
             booleanDescriptor("thinking", "Thinking", true),
             booleanDescriptor("fastMode", "Fast", false),
@@ -478,11 +474,6 @@ describe("buildCursorDiscoveredModelsFromConfigOptions", () => {
               { id: "high", label: "High" },
               { id: "xhigh", label: "Extra High" },
             ]),
-            selectDescriptor("contextWindow", "Context", [
-              { id: "272k", label: "272K", isDefault: true },
-              { id: "1m", label: "1M" },
-            ]),
-            booleanDescriptor("fastMode", "Fast", false),
           ],
         }),
       },
@@ -724,6 +715,21 @@ describe("resolveCursorAcpLaunchModelOverride", () => {
       ]),
     ).toBe("gpt-5.4-high-fast");
     expect(resolveCursorAcpLaunchModelOverride("gpt-5.5")).toBe("gpt-5.5-medium");
+    expect(
+      resolveCursorAcpLaunchModelOverride("gpt-5.5", [{ id: "reasoning", value: "low" }]),
+    ).toBe("gpt-5.5-medium");
+    expect(
+      resolveCursorAcpLaunchModelOverride("gpt-5.5", [{ id: "reasoning", value: "xhigh" }]),
+    ).toBe("gpt-5.5-extra-high");
+    expect(
+      resolveCursorAcpLaunchModelOverride("gpt-5.4", [
+        { id: "reasoning", value: "low" },
+        { id: "fastMode", value: true },
+      ]),
+    ).toBe("gpt-5.4-low");
+    expect(
+      resolveCursorAcpLaunchModelOverride("gpt-5.4-mini", [{ id: "reasoning", value: "none" }]),
+    ).toBe("gpt-5.4-mini-none");
     expect(
       resolveCursorAcpLaunchModelOverride("claude-opus-4-7", [
         { id: "reasoning", value: "high" },

@@ -126,9 +126,10 @@ function flattenSessionConfigSelectOptions(
 
 function normalizeCursorReasoningValue(
   value: string | null | undefined,
-): "low" | "medium" | "high" | "max" | "xhigh" | undefined {
+): "none" | "low" | "medium" | "high" | "max" | "xhigh" | undefined {
   const normalized = value?.trim().toLowerCase();
   switch (normalized) {
+    case "none":
     case "low":
     case "medium":
     case "high":
@@ -368,51 +369,63 @@ function hasCursorModelCapabilities(model: Pick<ServerProviderModel, "capabiliti
 
 function buildCursorGptCapabilities(input?: {
   readonly reasoning?: "none" | "low" | "medium" | "high" | "xhigh";
+  readonly reasoningValues?: ReadonlyArray<"none" | "low" | "medium" | "high" | "xhigh">;
   readonly context?: "272k" | "1m";
+  readonly includeContext?: boolean;
   readonly fast?: boolean;
+  readonly includeFast?: boolean;
 }): ModelCapabilities {
   const reasoning = input?.reasoning ?? "medium";
   const context = input?.context ?? "272k";
-  const reasoningOptions = [
-    ...(reasoning === "none" ? [{ value: "none", label: "None" }] : []),
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
-    { value: "xhigh", label: "Extra High" },
-  ] as const;
+  const reasoningValues = input?.reasoningValues ?? ["low", "medium", "high", "xhigh"];
+  const reasoningLabels = {
+    none: "None",
+    low: "Low",
+    medium: "Medium",
+    high: "High",
+    xhigh: "Extra High",
+  } as const;
   return createModelCapabilities({
     optionDescriptors: [
       buildSelectOptionDescriptor({
         id: "reasoning",
         label: "Reasoning",
-        options: reasoningOptions.map((option) => {
+        options: reasoningValues.map((value) => {
           const descriptor: {
-            value: (typeof option)["value"];
-            label: (typeof option)["label"];
+            value: typeof value;
+            label: (typeof reasoningLabels)[typeof value];
             isDefault?: true;
           } = {
-            value: option.value,
-            label: option.label,
+            value,
+            label: reasoningLabels[value],
           };
-          if (option.value === reasoning) {
+          if (value === reasoning) {
             descriptor.isDefault = true;
           }
           return descriptor;
         }),
       }),
-      buildSelectOptionDescriptor({
-        id: "contextWindow",
-        label: "Context",
-        options: [
-          { value: "272k", label: "272K", isDefault: context === "272k" },
-          { value: "1m", label: "1M", isDefault: context === "1m" },
-        ],
-      }),
-      buildBooleanOptionDescriptor({
-        id: "fastMode",
-        label: "Fast",
-        currentValue: input?.fast ?? false,
-      }),
+      ...(input?.includeContext === false
+        ? []
+        : [
+            buildSelectOptionDescriptor({
+              id: "contextWindow",
+              label: "Context",
+              options: [
+                { value: "272k", label: "272K", isDefault: context === "272k" },
+                { value: "1m", label: "1M", isDefault: context === "1m" },
+              ],
+            }),
+          ]),
+      ...(input?.includeFast === false
+        ? []
+        : [
+            buildBooleanOptionDescriptor({
+              id: "fastMode",
+              label: "Fast",
+              currentValue: input?.fast ?? false,
+            }),
+          ]),
     ],
   });
 }
@@ -420,8 +433,10 @@ function buildCursorGptCapabilities(input?: {
 function buildCursorClaudeCapabilities(input?: {
   readonly effort?: "low" | "medium" | "high" | "xhigh" | "max";
   readonly context?: "200k" | "1m";
+  readonly includeContext?: boolean;
   readonly thinking?: boolean;
   readonly fast?: boolean;
+  readonly includeFast?: boolean;
 }): ModelCapabilities {
   const effort = input?.effort ?? "high";
   const context = input?.context ?? "200k";
@@ -438,24 +453,32 @@ function buildCursorClaudeCapabilities(input?: {
           { value: "max", label: "Max", isDefault: effort === "max" },
         ],
       }),
-      buildSelectOptionDescriptor({
-        id: "contextWindow",
-        label: "Context",
-        options: [
-          { value: "200k", label: "200K", isDefault: context === "200k" },
-          { value: "1m", label: "1M", isDefault: context === "1m" },
-        ],
-      }),
+      ...(input?.includeContext === false
+        ? []
+        : [
+            buildSelectOptionDescriptor({
+              id: "contextWindow",
+              label: "Context",
+              options: [
+                { value: "200k", label: "200K", isDefault: context === "200k" },
+                { value: "1m", label: "1M", isDefault: context === "1m" },
+              ],
+            }),
+          ]),
       buildBooleanOptionDescriptor({
         id: "thinking",
         label: "Thinking",
         currentValue: input?.thinking ?? true,
       }),
-      buildBooleanOptionDescriptor({
-        id: "fastMode",
-        label: "Fast",
-        currentValue: input?.fast ?? false,
-      }),
+      ...(input?.includeFast === false
+        ? []
+        : [
+            buildBooleanOptionDescriptor({
+              id: "fastMode",
+              label: "Fast",
+              currentValue: input?.fast ?? false,
+            }),
+          ]),
     ],
   });
 }
@@ -463,7 +486,15 @@ function buildCursorClaudeCapabilities(input?: {
 function getCursorFallbackCapabilitiesForModel(model: string): ModelCapabilities {
   switch (model) {
     case "gpt-5.5":
+      return buildCursorGptCapabilities({
+        reasoning: "medium",
+        reasoningValues: ["medium", "high", "xhigh"],
+        context: "1m",
+        includeContext: false,
+        includeFast: false,
+      });
     case "gpt-5.4":
+      return buildCursorGptCapabilities({ context: "1m" });
     case "gpt-5.3-codex":
     case "gpt-5.2":
     case "gpt-5.2-codex":
@@ -471,18 +502,56 @@ function getCursorFallbackCapabilitiesForModel(model: string): ModelCapabilities
       return buildCursorGptCapabilities();
     case "gpt-5.4-mini":
     case "gpt-5.4-nano":
-      return buildCursorGptCapabilities({ reasoning: "medium" });
+      return buildCursorGptCapabilities({
+        reasoning: "medium",
+        reasoningValues: ["none", "low", "medium", "high", "xhigh"],
+        includeContext: false,
+        includeFast: false,
+      });
     case "gpt-5.3-codex-spark":
-      return buildCursorGptCapabilities({ reasoning: "medium", context: "272k" });
+      return buildCursorGptCapabilities({
+        reasoning: "medium",
+        context: "272k",
+        includeContext: false,
+        includeFast: false,
+      });
     case "claude-opus-4-7":
-      return buildCursorClaudeCapabilities({ effort: "xhigh", thinking: true });
+      return buildCursorClaudeCapabilities({
+        effort: "xhigh",
+        thinking: true,
+        context: "1m",
+        includeContext: false,
+        includeFast: false,
+      });
     case "claude-opus-4-6":
+      return buildCursorClaudeCapabilities({
+        effort: "high",
+        thinking: true,
+        context: "1m",
+      });
     case "claude-opus-4-5":
-      return buildCursorClaudeCapabilities({ effort: "high", thinking: true });
+      return buildCursorClaudeCapabilities({
+        effort: "high",
+        thinking: true,
+        includeContext: false,
+        includeFast: false,
+      });
     case "claude-sonnet-4-6":
+      return buildCursorClaudeCapabilities({
+        effort: "medium",
+        thinking: false,
+        context: "1m",
+        includeContext: false,
+        includeFast: false,
+      });
     case "claude-sonnet-4-5":
     case "claude-sonnet-4":
-      return buildCursorClaudeCapabilities({ effort: "medium", thinking: false });
+      return buildCursorClaudeCapabilities({
+        effort: "medium",
+        thinking: false,
+        includeContext: false,
+        includeFast: false,
+      });
     default:
       return EMPTY_CAPABILITIES;
   }
@@ -614,9 +683,17 @@ export function resolveCursorAcpLaunchModelOverride(
   const fast = cursorFastSuffix(selections);
   switch (baseModel) {
     case "gpt-5.5":
-      return `gpt-5.5-${effort === "xhigh" ? "extra-high" : effort === "none" ? "medium" : effort}`;
+      return `gpt-5.5-${
+        effort === "xhigh" || effort === "max"
+          ? "extra-high"
+          : effort === "high"
+            ? "high"
+            : "medium"
+      }`;
     case "gpt-5.4":
-      return `gpt-5.4-${effort === "none" ? "medium" : effort}${fast}`;
+      return `gpt-5.4-${effort === "none" || effort === "max" ? "medium" : effort}${
+        effort === "low" ? "" : fast
+      }`;
     case "gpt-5.3-codex":
       return effort === "medium"
         ? `gpt-5.3-codex${fast}`
@@ -624,7 +701,7 @@ export function resolveCursorAcpLaunchModelOverride(
     case "gpt-5.3-codex-spark":
       return effort === "medium"
         ? "gpt-5.3-codex-spark-preview"
-        : `gpt-5.3-codex-spark-preview-${effort === "none" ? "low" : effort}`;
+        : `gpt-5.3-codex-spark-preview-${effort === "none" || effort === "max" ? "low" : effort}`;
     case "gpt-5.2":
       return effort === "medium"
         ? `gpt-5.2${fast}`
@@ -646,6 +723,8 @@ export function resolveCursorAcpLaunchModelOverride(
     case "gpt-5.4-mini":
     case "gpt-5.4-nano":
       return `${baseModel}-${effort === "max" ? "xhigh" : effort}`;
+    case "gpt-5-mini":
+      return "gpt-5-mini";
     case "claude-opus-4-7": {
       const claudeEffort = cursorReasoningSuffix(selections, "high");
       const thinking = getProviderOptionBooleanSelectionValue(selections, "thinking") ?? true;

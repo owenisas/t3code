@@ -157,6 +157,28 @@ describe("sortThreads", () => {
     ]);
   });
 
+  it("keeps starred threads above newer unstarred threads", () => {
+    const sorted = sortThreads(
+      [
+        makeThread({
+          id: ThreadId.make("thread-unstarred-newer"),
+          updatedAt: "2026-03-09T10:30:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("thread-starred-older"),
+          updatedAt: "2026-03-09T10:00:00.000Z",
+          starredAt: "2026-03-09T10:05:00.000Z",
+        }),
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      ThreadId.make("thread-starred-older"),
+      ThreadId.make("thread-unstarred-newer"),
+    ]);
+  });
+
   it("returns the latest active thread for a project", () => {
     const latestThread = getLatestThreadForProject(
       [

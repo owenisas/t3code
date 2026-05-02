@@ -58,6 +58,8 @@ const promptText = process.argv[4] ?? "helo";
 const targetReasoning = process.env.CURSOR_REASONING ?? "";
 const targetContext = process.env.CURSOR_CONTEXT ?? "";
 const targetFast = process.env.CURSOR_FAST ?? "";
+const launchModel = process.env.CURSOR_LAUNCH_MODEL ?? "";
+const skipModelSet = process.env.CURSOR_SKIP_MODEL_SET === "1";
 const agentBin = process.env.CURSOR_AGENT_BIN ?? "agent";
 const promptWaitMs = Number(process.env.CURSOR_PROMPT_WAIT_MS ?? "4000");
 const requestTimeoutMs = Number(process.env.CURSOR_REQUEST_TIMEOUT_MS ?? "20000");
@@ -323,7 +325,11 @@ async function setSelectOptionIfAdvertised(
 }
 
 async function main() {
-  const rpc = new JsonRpcChild(agentBin, ["acp"], targetCwd);
+  const rpc = new JsonRpcChild(
+    agentBin,
+    [...(launchModel ? ["--model", launchModel] : []), "acp"],
+    targetCwd,
+  );
 
   try {
     const initializeResponse = await rpc.request("initialize", {
@@ -367,20 +373,22 @@ async function main() {
       fail("Cursor ACP did not expose a select-type model config option.");
     }
 
-    if (!advertisedModels.includes(targetModel)) {
+    if (!skipModelSet && !advertisedModels.includes(targetModel)) {
       fail(
         `Cursor ACP did not advertise model ${JSON.stringify(targetModel)}. Advertised values: ${advertisedModels.join(", ")}`,
       );
     }
 
-    const setModelResponse = (await rpc.request("session/set_config_option", {
-      sessionId,
-      configId: modelConfig.id,
-      value: targetModel,
-    })) as SetConfigResult | null | undefined;
-    logSection("SET_MODEL_RESPONSE", setModelResponse);
+    if (!skipModelSet) {
+      const setModelResponse = (await rpc.request("session/set_config_option", {
+        sessionId,
+        configId: modelConfig.id,
+        value: targetModel,
+      })) as SetConfigResult | null | undefined;
+      logSection("SET_MODEL_RESPONSE", setModelResponse);
 
-    configOptions = setModelResponse?.configOptions ?? configOptions;
+      configOptions = setModelResponse?.configOptions ?? configOptions;
+    }
 
     configOptions = await setSelectOptionIfAdvertised(
       rpc,

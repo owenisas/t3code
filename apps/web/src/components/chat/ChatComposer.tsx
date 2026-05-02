@@ -177,15 +177,25 @@ const yoloTriggerDelayOptions: ReadonlyArray<{
     description: "Review as soon as the turn settles.",
     seconds: 0,
   },
-  { value: "10", label: "10 sec", description: "Short pause before review.", seconds: 10 },
   {
     value: "30",
     label: "30 sec",
     description: "Give logs and files a moment to settle.",
     seconds: 30,
   },
-  { value: "60", label: "1 min", description: "Wait one minute before each review.", seconds: 60 },
   { value: "300", label: "5 min", description: "Slow autonomous loop.", seconds: 300 },
+  {
+    value: "600",
+    label: "10 min",
+    description: "Wait ten minutes before each review.",
+    seconds: 600,
+  },
+  {
+    value: "1800",
+    label: "30 min",
+    description: "Long pause for slow builds and external checks.",
+    seconds: 1800,
+  },
 ];
 
 function yoloTriggerDelayValue(seconds: YoloTriggerDelaySeconds): string {

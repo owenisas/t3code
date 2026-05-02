@@ -43,6 +43,7 @@ describe("ChangedFilesTree", () => {
           files={files}
           allDirectoriesExpanded={false}
           resolvedTheme="light"
+          workspaceRoot="/repo/project"
           onOpenTurnDiff={() => {}}
         />,
       );
@@ -104,6 +105,7 @@ describe("ChangedFilesTree", () => {
           files={files}
           allDirectoriesExpanded
           resolvedTheme="light"
+          workspaceRoot="/repo/project"
           onOpenTurnDiff={() => {}}
         />,
       );
@@ -113,4 +115,19 @@ describe("ChangedFilesTree", () => {
       }
     },
   );
+
+  it("shows the absolute changed file path in hover metadata", () => {
+    const markup = renderToStaticMarkup(
+      <ChangedFilesTree
+        turnId={TurnId.make("turn-1")}
+        files={[{ path: "apps/web/src/index.ts", additions: 2, deletions: 1 }]}
+        allDirectoriesExpanded
+        resolvedTheme="light"
+        workspaceRoot="/repo/project"
+        onOpenTurnDiff={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("/repo/project/apps/web/src/index.ts");
+  });
 });

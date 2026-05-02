@@ -26,6 +26,7 @@ import {
   type ThreadFollowUpMode,
   type ScopedThreadRef,
   type ProviderKind,
+  type ProviderOptionSelection,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
@@ -42,6 +43,7 @@ import {
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { getComposerProviderState } from "../chat/composerProviderState";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { isElectron } from "../../env";
@@ -1784,6 +1786,7 @@ type ScheduledJobFormState = {
   prompt: string;
   provider: ProviderKind;
   model: string;
+  modelOptions?: ReadonlyArray<ProviderOptionSelection> | undefined;
   runtimeMode: "approval-required" | "auto-accept-edits" | "full-access";
   interactionMode: "default" | "plan";
   intervalHours: string;
@@ -1795,6 +1798,7 @@ const DEFAULT_SCHEDULED_JOB_FORM: ScheduledJobFormState = {
   prompt: "",
   provider: "codex",
   model: "",
+  modelOptions: undefined,
   runtimeMode: "full-access",
   interactionMode: "default",
   intervalHours: "24",
@@ -1809,6 +1813,7 @@ function toScheduledJobFormState(
     prompt: job.prompt,
     provider: job.modelSelection.provider,
     model: job.modelSelection.model,
+    modelOptions: job.modelSelection.options,
     runtimeMode: job.runtimeMode,
     interactionMode: job.interactionMode,
     intervalHours: String(Math.max(1, Math.round(job.schedule.intervalMinutes / 60))),
@@ -1884,6 +1889,29 @@ export function ScheduledJobsPanel() {
     [editingJobId, jobs],
   );
   const modelsByProvider = useMemo(() => providerModelOptionsByProvider(providers), [providers]);
+  const selectedProviderModels = modelsByProvider[formState.provider];
+  const selectedModelForPicker = useMemo(() => {
+    return selectedProviderModels.some((option) => option.slug === formState.model)
+      ? formState.model
+      : (normalizeModelSlug(formState.model, formState.provider) ?? formState.model);
+  }, [formState.model, formState.provider, selectedProviderModels]);
+  const scheduledJobProviderState = useMemo(
+    () =>
+      getComposerProviderState({
+        provider: formState.provider,
+        model: formState.model,
+        models: selectedProviderModels,
+        prompt: formState.prompt,
+        modelOptions: formState.modelOptions,
+      }),
+    [
+      formState.model,
+      formState.modelOptions,
+      formState.prompt,
+      formState.provider,
+      selectedProviderModels,
+    ],
+  );
   const projectsById = useMemo(
     () => Object.fromEntries(projects.map((project) => [project.id, project] as const)),
     [projects],
@@ -1908,20 +1936,38 @@ export function ScheduledJobsPanel() {
         if (patch.provider !== undefined) {
           next.model = nextScheduledJobModel(patch.provider, modelsByProvider, current.model);
         }
+        if (
+          (patch.provider !== undefined || patch.model !== undefined) &&
+          !("modelOptions" in patch)
+        ) {
+          next.modelOptions = undefined;
+        }
         return next;
       }),
     [modelsByProvider],
   );
 
-  const resetForm = useCallback(() => {
-    const defaultProject = projects[0];
-    setEditingJobId(null);
-    setFormState({
-      ...DEFAULT_SCHEDULED_JOB_FORM,
-      projectId: defaultProject?.id ?? "",
-      model: nextScheduledJobModel("codex", modelsByProvider, ""),
-    });
-  }, [modelsByProvider, projects]);
+  const resetForm = useCallback(
+    (overrides: Partial<ScheduledJobFormState> = {}) => {
+      const defaultProject = projects[0];
+      const provider = overrides.provider ?? DEFAULT_SCHEDULED_JOB_FORM.provider;
+      const model = nextScheduledJobModel(provider, modelsByProvider, overrides.model ?? "");
+      const modelOptions =
+        overrides.model !== undefined && model === overrides.model
+          ? overrides.modelOptions
+          : undefined;
+      setEditingJobId(null);
+      setFormState({
+        ...DEFAULT_SCHEDULED_JOB_FORM,
+        ...overrides,
+        projectId: overrides.projectId ?? defaultProject?.id ?? "",
+        provider,
+        model,
+        modelOptions,
+      });
+    },
+    [modelsByProvider, projects],
+  );
 
   useEffect(() => {
     if (!editingJobId) {
@@ -1961,6 +2007,11 @@ export function ScheduledJobsPanel() {
   const saveJob = useCallback(async () => {
     const { project, intervalHours } = validateForm();
     const api = ensureEnvironmentApi(project.environmentId);
+    const modelSelection = createModelSelection(
+      formState.provider,
+      formState.model,
+      scheduledJobProviderState.modelOptionsForDispatch,
+    );
     setIsSaving(true);
     try {
       if (editingJobId) {
@@ -1970,10 +2021,7 @@ export function ScheduledJobsPanel() {
           jobId: editingJobId,
           title: formState.title,
           prompt: formState.prompt,
-          modelSelection: {
-            provider: formState.provider,
-            model: formState.model,
-          },
+          modelSelection,
           runtimeMode: formState.runtimeMode,
           interactionMode: formState.interactionMode,
           schedule: {
@@ -1988,21 +2036,26 @@ export function ScheduledJobsPanel() {
             projectId: project.id,
             title: formState.title,
             prompt: formState.prompt,
-            modelSelection: {
-              provider: formState.provider,
-              model: formState.model,
-            },
+            modelSelection,
             runtimeMode: formState.runtimeMode,
             interactionMode: formState.interactionMode,
             intervalHours,
           }),
         );
       }
-      resetForm();
+      resetForm({
+        projectId: project.id,
+        provider: formState.provider,
+        model: formState.model,
+        modelOptions: scheduledJobProviderState.modelOptionsForDispatch,
+        runtimeMode: formState.runtimeMode,
+        interactionMode: formState.interactionMode,
+        intervalHours: String(intervalHours),
+      });
     } finally {
       setIsSaving(false);
     }
-  }, [editingJobId, formState, resetForm, validateForm]);
+  }, [editingJobId, formState, resetForm, scheduledJobProviderState, validateForm]);
 
   const handleJobAction = useCallback(
     async (
@@ -2100,42 +2153,27 @@ export function ScheduledJobsPanel() {
               placeholder="Daily review"
               onChange={(event) => updateForm({ title: event.target.value })}
             />
-            <Select
-              value={formState.provider}
-              onValueChange={(value) =>
-                updateForm({ provider: value as ScheduledJobFormState["provider"] })
-              }
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Choose provider" />
-              </SelectTrigger>
-              <SelectPopup>
-                {providers.map((provider) => (
-                  <SelectItem key={provider.provider} value={provider.provider}>
-                    {PROVIDER_DISPLAY_NAMES[provider.provider]}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-            <Select
-              value={formState.model}
-              onValueChange={(value) => {
-                if (value) {
-                  updateForm({ model: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Choose model" />
-              </SelectTrigger>
-              <SelectPopup>
-                {modelsByProvider[formState.provider].map((model) => (
-                  <SelectItem key={model.slug} value={model.slug}>
-                    {model.name}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
+            <ProviderModelPicker
+              provider={formState.provider}
+              model={selectedModelForPicker}
+              lockedProvider={null}
+              providers={providers}
+              modelOptionsByProvider={modelsByProvider}
+              triggerVariant="outline"
+              triggerClassName="w-full max-w-none"
+              onProviderModelChange={(provider, model) => updateForm({ provider, model })}
+            />
+            <TraitsPicker
+              provider={formState.provider}
+              models={selectedProviderModels}
+              model={formState.model}
+              prompt={formState.prompt}
+              modelOptions={formState.modelOptions}
+              triggerVariant="outline"
+              triggerClassName="w-full justify-start"
+              onPromptChange={(prompt) => updateForm({ prompt })}
+              onModelOptionsChange={(modelOptions) => updateForm({ modelOptions })}
+            />
             <Select
               value={formState.runtimeMode}
               onValueChange={(value) =>
@@ -2204,7 +2242,7 @@ export function ScheduledJobsPanel() {
                 {editingJobId ? "Save changes" : "Create job"}
               </Button>
               {editingJobId ? (
-                <Button size="sm" variant="outline" onClick={resetForm}>
+                <Button size="sm" variant="outline" onClick={() => resetForm()}>
                   Cancel
                 </Button>
               ) : null}

@@ -109,6 +109,13 @@ export function applyCursorAcpModelSelection<E>(input: {
       );
     }
 
+    if (isCursorAcpLaunchOnlyModel(baseModel)) {
+      // Cursor launch-preset models reject or corrupt some no-op-looking ACP config writes
+      // after startup (notably GPT-5.5 context/reasoning), so encode those choices only in
+      // `agent --model ... acp` and avoid in-session model/config updates.
+      return;
+    }
+
     yield* input.runtime.setModel(baseModel).pipe(
       Effect.mapError((cause) =>
         input.mapError({

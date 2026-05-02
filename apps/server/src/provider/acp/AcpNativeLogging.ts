@@ -3,13 +3,17 @@ import { Cause, Effect } from "effect";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
 import type { EventNdjsonLogger } from "../Layers/EventNdjsonLogger.ts";
-import type { AcpSessionRequestLogEvent, AcpSessionRuntimeOptions } from "./AcpSessionRuntime.ts";
+import type {
+  AcpSessionProcessLogEvent,
+  AcpSessionRequestLogEvent,
+  AcpSessionRuntimeOptions,
+} from "./AcpSessionRuntime.ts";
 
 function writeNativeAcpLog(input: {
   readonly nativeEventLogger: EventNdjsonLogger | undefined;
   readonly provider: ProviderKind;
   readonly threadId: ThreadId;
-  readonly kind: "request" | "protocol";
+  readonly kind: "request" | "protocol" | "process";
   readonly payload: unknown;
 }): Effect.Effect<void, never> {
   return Effect.gen(function* () {
@@ -42,12 +46,24 @@ function formatRequestLogPayload(event: AcpSessionRequestLogEvent) {
   };
 }
 
+function formatProcessLogPayload(event: AcpSessionProcessLogEvent) {
+  return event;
+}
+
 export function makeAcpNativeLoggers(input: {
   readonly nativeEventLogger: EventNdjsonLogger | undefined;
   readonly provider: ProviderKind;
   readonly threadId: ThreadId;
-}): Pick<AcpSessionRuntimeOptions, "requestLogger" | "protocolLogging"> {
+}): Pick<AcpSessionRuntimeOptions, "requestLogger" | "processLogger" | "protocolLogging"> {
   return {
+    processLogger: (event) =>
+      writeNativeAcpLog({
+        nativeEventLogger: input.nativeEventLogger,
+        provider: input.provider,
+        threadId: input.threadId,
+        kind: "process",
+        payload: formatProcessLogPayload(event),
+      }),
     requestLogger: (event) =>
       writeNativeAcpLog({
         nativeEventLogger: input.nativeEventLogger,

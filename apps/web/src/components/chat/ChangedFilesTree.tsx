@@ -6,6 +6,8 @@ import { ChevronRightIcon, FolderIcon, FolderClosedIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { VscodeEntryIcon } from "./VscodeEntryIcon";
+import { resolvePathLinkTarget } from "../../terminal-links";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
 
@@ -14,9 +16,11 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
   files: ReadonlyArray<TurnDiffFileChange>;
   allDirectoriesExpanded: boolean;
   resolvedTheme: "light" | "dark";
+  workspaceRoot: string | undefined;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
-  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId } = props;
+  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId, workspaceRoot } =
+    props;
   const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
   const directoryPathsKey = useMemo(
     () => collectDirectoryPaths(treeNodes).join("\u0000"),
@@ -94,10 +98,15 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
       );
     }
 
-    return (
+    const absolutePath = workspaceRoot
+      ? resolvePathLinkTarget(node.path, workspaceRoot)
+      : node.path;
+    const fileRow = (
       <button
         key={`file:${node.path}`}
         type="button"
+        aria-label={`${node.name} (${absolutePath})`}
+        title={absolutePath}
         className="group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80"
         style={{ paddingLeft: `${leftPadding}px` }}
         onClick={() => onOpenTurnDiff(turnId, node.path)}
@@ -118,6 +127,21 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           </span>
         )}
       </button>
+    );
+
+    return (
+      <Tooltip key={`file-tooltip:${node.path}`}>
+        <TooltipTrigger render={fileRow} />
+        <TooltipPopup
+          align="start"
+          className="max-w-[min(56rem,calc(100vw-2rem))] px-0 py-0"
+          side="top"
+        >
+          <div className="max-w-[min(56rem,calc(100vw-2rem))] overflow-x-auto px-1.5 py-1 font-mono text-[11px] leading-4 whitespace-nowrap">
+            {absolutePath}
+          </div>
+        </TooltipPopup>
+      </Tooltip>
     );
   };
 

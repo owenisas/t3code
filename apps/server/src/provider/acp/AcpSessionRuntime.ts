@@ -35,6 +35,7 @@ export interface AcpSessionRuntimeOptions {
   };
   readonly authMethodId: string;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
+  readonly processLogger?: (event: AcpSessionProcessLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
     readonly logOutgoing?: boolean;
@@ -49,6 +50,22 @@ export interface AcpSessionRequestLogEvent {
   readonly result?: unknown;
   readonly cause?: Cause.Cause<EffectAcpErrors.AcpError>;
 }
+
+export type AcpSessionProcessLogEvent =
+  | {
+      readonly type: "spawned";
+      readonly command: string;
+      readonly args: ReadonlyArray<string>;
+      readonly cwd?: string;
+    }
+  | {
+      readonly type: "stderr";
+      readonly line: string;
+    }
+  | {
+      readonly type: "exited";
+      readonly exitCode: number;
+    };
 
 export interface AcpSessionRuntimeStartResult {
   readonly sessionId: string;
@@ -155,6 +172,8 @@ const makeAcpSessionRuntime = (
 
     const logRequest = (event: AcpSessionRequestLogEvent) =>
       options.requestLogger ? options.requestLogger(event) : Effect.void;
+    const logProcess = (event: AcpSessionProcessLogEvent) =>
+      options.processLogger ? options.processLogger(event) : Effect.void;
 
     const runLoggedRequest = <A>(
       method: string,
@@ -202,6 +221,39 @@ const makeAcpSessionRuntime = (
             }),
         ),
       );
+    yield* logProcess({
+      type: "spawned",
+      command: options.spawn.command,
+      args: options.spawn.args,
+      ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
+    });
+
+    const stderrRemainderRef = yield* Ref.make("");
+    yield* child.stderr.pipe(
+      Stream.decodeText(),
+      Stream.runForEach((chunk) =>
+        Ref.modify(stderrRemainderRef, (current) => {
+          const combined = current + chunk;
+          const lines = combined.split("\n");
+          const remainder = lines.pop() ?? "";
+          return [lines.map((line) => line.replace(/\r$/, "")), remainder] as const;
+        }).pipe(
+          Effect.flatMap((lines) =>
+            Effect.forEach(
+              lines,
+              (line) => (line.length > 0 ? logProcess({ type: "stderr", line }) : Effect.void),
+              { discard: true },
+            ),
+          ),
+        ),
+      ),
+      Effect.forkIn(runtimeScope),
+    );
+
+    yield* child.exitCode.pipe(
+      Effect.flatMap((exitCode) => logProcess({ type: "exited", exitCode: Number(exitCode) })),
+      Effect.forkIn(runtimeScope),
+    );
 
     const acpContext = yield* Layer.build(
       EffectAcpClient.layerChildProcess(child, {

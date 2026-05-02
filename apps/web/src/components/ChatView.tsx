@@ -647,6 +647,7 @@ export default function ChatView(props: ChatViewProps) {
     useState<YoloIterationLimit>(10);
   const [composerYoloTriggerDelaySeconds, setComposerYoloTriggerDelaySeconds] =
     useState<YoloTriggerDelaySeconds>(0);
+  const composerModeBeforeYoloRef = useRef<ProviderInteractionMode | null>(null);
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
@@ -1902,6 +1903,7 @@ export default function ChatView(props: ChatViewProps) {
   const handleInteractionModeChange = useCallback(
     (mode: ProviderInteractionMode) => {
       setComposerYoloModeEnabled(false);
+      composerModeBeforeYoloRef.current = null;
       if (mode === interactionMode) return;
       setComposerDraftInteractionMode(composerDraftTarget, mode);
       if (isLocalDraftThread) {
@@ -1924,6 +1926,9 @@ export default function ChatView(props: ChatViewProps) {
   const handleComposerModeChange = useCallback(
     (mode: ComposerMode) => {
       if (mode === "yolo") {
+        if (!composerYoloModeEnabled) {
+          composerModeBeforeYoloRef.current = interactionMode;
+        }
         setComposerYoloModeEnabled(true);
         if (interactionMode !== "default") {
           setComposerDraftInteractionMode(composerDraftTarget, "default");
@@ -1938,6 +1943,7 @@ export default function ChatView(props: ChatViewProps) {
     },
     [
       composerDraftTarget,
+      composerYoloModeEnabled,
       handleInteractionModeChange,
       interactionMode,
       isLocalDraftThread,
@@ -1946,6 +1952,27 @@ export default function ChatView(props: ChatViewProps) {
       setDraftThreadContext,
     ],
   );
+  const restoreComposerModeAfterYoloTrigger = useCallback(() => {
+    const previousMode = composerModeBeforeYoloRef.current;
+    composerModeBeforeYoloRef.current = null;
+    setComposerYoloModeEnabled(false);
+    if (!previousMode || previousMode === interactionMode) {
+      scheduleComposerFocus();
+      return;
+    }
+    setComposerDraftInteractionMode(composerDraftTarget, previousMode);
+    if (isLocalDraftThread) {
+      setDraftThreadContext(composerDraftTarget, { interactionMode: previousMode });
+    }
+    scheduleComposerFocus();
+  }, [
+    composerDraftTarget,
+    interactionMode,
+    isLocalDraftThread,
+    scheduleComposerFocus,
+    setComposerDraftInteractionMode,
+    setDraftThreadContext,
+  ]);
   const togglePlanSidebar = useCallback(() => {
     setPlanSidebarOpen((open) => {
       if (open) {
@@ -2057,6 +2084,8 @@ export default function ChatView(props: ChatViewProps) {
       setPlanSidebarOpen(false);
     }
     planSidebarDismissedForTurnRef.current = null;
+    composerModeBeforeYoloRef.current = null;
+    setComposerYoloModeEnabled(false);
   }, [activeThread?.id]);
 
   useEffect(() => {
@@ -2863,6 +2892,9 @@ export default function ChatView(props: ChatViewProps) {
         err instanceof Error ? err.message : "Failed to send message.",
       );
     });
+    if (turnStartSucceeded && yoloRunIdForSend) {
+      restoreComposerModeAfterYoloTrigger();
+    }
     sendInFlightRef.current = false;
     if (!turnStartSucceeded && effectiveActiveRunMode === null) {
       resetLocalDispatch();

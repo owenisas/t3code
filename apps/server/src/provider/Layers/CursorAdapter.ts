@@ -143,6 +143,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function summarizePromptParts(
+  promptParts: ReadonlyArray<EffectAcpSchema.ContentBlock>,
+): ReadonlyArray<Record<string, unknown>> {
+  return promptParts.map((part) => {
+    if (part.type === "text") {
+      return {
+        type: "text",
+        characters: part.text.length,
+        preview: part.text.slice(0, 160),
+      };
+    }
+    if (part.type === "image") {
+      return {
+        type: "image",
+        mimeType: part.mimeType,
+        base64Bytes: Buffer.byteLength(part.data, "base64"),
+      };
+    }
+    return { type: part.type };
+  });
+}
+
 function parseCursorResume(raw: unknown): { sessionId: string } | undefined {
   if (!isRecord(raw)) return undefined;
   if (raw.schemaVersion !== CURSOR_RESUME_VERSION) return undefined;
@@ -357,6 +379,47 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
         );
       });
 
+    const logDiagnostic = (input: {
+      readonly threadId: ThreadId;
+      readonly name: string;
+      readonly payload?: Record<string, unknown>;
+      readonly level?: "debug" | "warning";
+    }) =>
+      Effect.gen(function* () {
+        const observedAt = new Date().toISOString();
+        const payload = {
+          name: input.name,
+          ...input.payload,
+        };
+        if (nativeEventLogger) {
+          yield* nativeEventLogger.write(
+            {
+              observedAt,
+              event: {
+                id: crypto.randomUUID(),
+                kind: "diagnostic",
+                provider: PROVIDER,
+                createdAt: observedAt,
+                threadId: input.threadId,
+                payload,
+              },
+            },
+            input.threadId,
+          );
+        }
+        const logEffect =
+          input.level === "warning"
+            ? Effect.logWarning("cursor provider diagnostic", payload)
+            : Effect.logDebug("cursor provider diagnostic", payload);
+        yield* logEffect.pipe(
+          Effect.annotateLogs({
+            provider: PROVIDER,
+            threadId: String(input.threadId),
+            diagnostic: input.name,
+          }),
+        );
+      });
+
     const emitPlanUpdate = (
       ctx: CursorSessionContext,
       payload: {
@@ -482,6 +545,18 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
             nativeEventLogger,
             provider: PROVIDER,
             threadId: input.threadId,
+          });
+
+          yield* logDiagnostic({
+            threadId: input.threadId,
+            name: "session.starting",
+            payload: {
+              cwd,
+              resumeSessionId: resumeSessionId ?? null,
+              requestedModel: cursorModelSelection?.model ?? null,
+              launchModelOverride: launchModelOverride ?? null,
+              runtimeMode: input.runtimeMode,
+            },
           });
 
           const acp = yield* makeCursorAcpRuntime({
@@ -663,6 +738,15 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/start", error),
             ),
           );
+          yield* logDiagnostic({
+            threadId: input.threadId,
+            name: "session.acp_started",
+            payload: {
+              sessionId: started.sessionId,
+              modelConfigId: started.modelConfigId ?? null,
+              resumed: Boolean(resumeSessionId),
+            },
+          });
 
           yield* applyRequestedSessionConfiguration({
             runtime: acp,
@@ -671,6 +755,15 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
             modelSelection: cursorModelSelection,
             mapError: ({ cause, method }) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
+          });
+          yield* logDiagnostic({
+            threadId: input.threadId,
+            name: "session.configured",
+            payload: {
+              requestedModel: cursorModelSelection?.model ?? null,
+              optionCount: cursorModelSelection?.options?.length ?? 0,
+              runtimeMode: input.runtimeMode,
+            },
           });
 
           const now = yield* nowIso;
@@ -828,6 +921,17 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
           input.modelSelection?.provider === "cursor" ? input.modelSelection : undefined;
         const model = turnModelSelection?.model ?? ctx.session.model;
         const resolvedModel = resolveCursorAcpBaseModelId(model);
+        yield* logDiagnostic({
+          threadId: input.threadId,
+          name: "turn.configuring",
+          payload: {
+            requestedModel: model ?? null,
+            resolvedModel,
+            runtimeMode: ctx.session.runtimeMode,
+            interactionMode: input.interactionMode ?? null,
+            optionCount: turnModelSelection?.options?.length ?? 0,
+          },
+        });
         yield* applyRequestedSessionConfiguration({
           runtime: ctx.acp,
           runtimeMode: ctx.session.runtimeMode,
@@ -903,11 +1007,73 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
           });
         }
 
+        const promptStartedAtMs = Date.now();
+        const promptSummary = summarizePromptParts(promptParts);
+        yield* logDiagnostic({
+          threadId: input.threadId,
+          name: "turn.prompt.started",
+          payload: {
+            turnId,
+            model: resolvedModel,
+            promptParts: promptSummary,
+          },
+        });
+        const pendingPromptLogFiber = yield* Effect.gen(function* () {
+          yield* Effect.sleep("30 seconds");
+          yield* logDiagnostic({
+            threadId: input.threadId,
+            name: "turn.prompt.pending",
+            level: "warning",
+            payload: {
+              turnId,
+              elapsedMs: Date.now() - promptStartedAtMs,
+              model: resolvedModel,
+            },
+          });
+          yield* Effect.sleep("90 seconds");
+          yield* logDiagnostic({
+            threadId: input.threadId,
+            name: "turn.prompt.still_pending",
+            level: "warning",
+            payload: {
+              turnId,
+              elapsedMs: Date.now() - promptStartedAtMs,
+              model: resolvedModel,
+            },
+          });
+        }).pipe(Effect.forkChild);
+
         const result = yield* ctx.acp
           .prompt({
             prompt: promptParts,
           })
           .pipe(
+            Effect.tap((response) =>
+              logDiagnostic({
+                threadId: input.threadId,
+                name: "turn.prompt.succeeded",
+                payload: {
+                  turnId,
+                  elapsedMs: Date.now() - promptStartedAtMs,
+                  model: resolvedModel,
+                  stopReason: response.stopReason ?? null,
+                },
+              }),
+            ),
+            Effect.tapError((error) =>
+              logDiagnostic({
+                threadId: input.threadId,
+                name: "turn.prompt.failed",
+                level: "warning",
+                payload: {
+                  turnId,
+                  elapsedMs: Date.now() - promptStartedAtMs,
+                  model: resolvedModel,
+                  error: error.message,
+                },
+              }),
+            ),
+            Effect.ensuring(Fiber.interrupt(pendingPromptLogFiber)),
             Effect.mapError((error) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
             ),

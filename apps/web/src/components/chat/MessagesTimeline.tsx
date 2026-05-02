@@ -455,6 +455,7 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                   turnSummary={row.assistantTurnDiffSummary}
                   routeThreadKey={ctx.routeThreadKey}
                   resolvedTheme={ctx.resolvedTheme}
+                  workspaceRoot={ctx.workspaceRoot}
                   onOpenTurnDiff={ctx.onOpenTurnDiff}
                 />
                 <div className="mt-1.5 flex items-center gap-2">
@@ -598,7 +599,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
               className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"
               onClick={() => setIsExpanded((v) => !v)}
             >
-              {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
+              {isExpanded ? "Show fewer" : `Show all details (${hiddenCount} hidden)`}
             </button>
           )}
         </div>
@@ -622,11 +623,13 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
   turnSummary,
   routeThreadKey,
   resolvedTheme,
+  workspaceRoot,
   onOpenTurnDiff,
 }: {
   turnSummary: TurnDiffSummary | undefined;
   routeThreadKey: string;
   resolvedTheme: "light" | "dark";
+  workspaceRoot: string | undefined;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
   if (!turnSummary) return null;
@@ -639,6 +642,7 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
       checkpointFiles={checkpointFiles}
       routeThreadKey={routeThreadKey}
       resolvedTheme={resolvedTheme}
+      workspaceRoot={workspaceRoot}
       onOpenTurnDiff={onOpenTurnDiff}
     />
   );
@@ -651,12 +655,14 @@ function AssistantChangedFilesSectionInner({
   checkpointFiles,
   routeThreadKey,
   resolvedTheme,
+  workspaceRoot,
   onOpenTurnDiff,
 }: {
   turnSummary: TurnDiffSummary;
   checkpointFiles: TurnDiffSummary["files"];
   routeThreadKey: string;
   resolvedTheme: "light" | "dark";
+  workspaceRoot: string | undefined;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
   const allDirectoriesExpanded = useUiStateStore(
@@ -704,6 +710,7 @@ function AssistantChangedFilesSectionInner({
         files={checkpointFiles}
         allDirectoriesExpanded={allDirectoriesExpanded}
         resolvedTheme={resolvedTheme}
+        workspaceRoot={workspaceRoot}
         onOpenTurnDiff={onOpenTurnDiff}
       />
     </div>

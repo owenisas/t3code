@@ -94,7 +94,7 @@ describe("buildCursorAcpSpawnInput", () => {
 });
 
 describe("applyCursorAcpModelSelection", () => {
-  it("sets the base model before applying separate config options", async () => {
+  it("skips model and config writes for launch-preset models already selected at startup", async () => {
     const calls: Array<
       | { readonly type: "model"; readonly value: string }
       | { readonly type: "config"; readonly configId: string; readonly value: string | boolean }
@@ -130,12 +130,61 @@ describe("applyCursorAcpModelSelection", () => {
       }),
     );
 
-    expect(calls).toEqual([
-      { type: "model", value: "gpt-5.4" },
-      { type: "config", configId: "reasoning", value: "extra-high" },
-      { type: "config", configId: "context", value: "1m" },
-      { type: "config", configId: "fast", value: "true" },
-    ]);
+    expect(calls).toEqual([]);
+  });
+
+  it("does not apply in-session config writes for launch-preset models", async () => {
+    const calls: Array<{ readonly type: "model" | "config"; readonly value: string | boolean }> =
+      [];
+    const runtime = {
+      getConfigOptions: Effect.succeed(parameterizedGpt54ConfigOptions),
+      setModel: (value: string) =>
+        Effect.sync(() => {
+          calls.push({ type: "model", value });
+        }),
+      setConfigOption: (_configId: string, value: string | boolean) =>
+        Effect.sync(() => {
+          calls.push({ type: "config", value });
+        }),
+    };
+
+    await Effect.runPromise(
+      applyCursorAcpModelSelection({
+        runtime,
+        model: "gpt-5.4",
+        selections: [
+          { id: "reasoning", value: "high" },
+          { id: "contextWindow", value: "1m" },
+        ],
+        mapError: ({ step, cause }) => new Error(`${step}: ${cause.message}`),
+      }),
+    );
+
+    expect(calls).toEqual([]);
+  });
+
+  it("fails launch-preset model selection when ACP was not started on that model", async () => {
+    const runtime = {
+      getConfigOptions: Effect.succeed([
+        {
+          ...parameterizedGpt54ConfigOptions[0]!,
+          currentValue: "composer-2",
+        },
+      ] as ReadonlyArray<EffectAcpSchema.SessionConfigOption>),
+      setModel: () => Effect.void,
+      setConfigOption: () => Effect.void,
+    };
+
+    await expect(
+      Effect.runPromise(
+        applyCursorAcpModelSelection({
+          runtime,
+          model: "gpt-5.4",
+          selections: [],
+          mapError: ({ step, cause }) => new Error(`${step}: ${cause.message}`),
+        }),
+      ),
+    ).rejects.toThrow("must be selected when the ACP process starts");
   });
 
   it("normalizes legacy Cursor auto and launch-style model ids before setModel", async () => {
@@ -167,10 +216,7 @@ describe("applyCursorAcpModelSelection", () => {
       }),
     );
 
-    expect(calls).toEqual([
-      { type: "model", value: "default" },
-      { type: "model", value: "claude-opus-4-7" },
-    ]);
+    expect(calls).toEqual([{ type: "model", value: "default" }]);
   });
 
   it("allows launch-only Cursor aliases when ACP already reports the alias as current", async () => {
@@ -206,7 +252,7 @@ describe("applyCursorAcpModelSelection", () => {
       }),
     );
 
-    expect(calls).toEqual([{ type: "model", value: "gpt-5.3-codex-spark" }]);
+    expect(calls).toEqual([]);
   });
 
   it("rejects switching to launch-only Cursor aliases in an existing ACP session", async () => {

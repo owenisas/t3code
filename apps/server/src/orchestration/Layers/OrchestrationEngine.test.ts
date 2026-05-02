@@ -313,6 +313,35 @@ describe("OrchestrationEngine", () => {
       )?.archivedAt,
     ).toBeNull();
 
+    const starredAt = "2026-04-29T00:00:00.000Z";
+    await system.run(
+      engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-star"),
+        threadId: ThreadId.make("thread-archive"),
+        starredAt,
+      }),
+    );
+    expect(
+      (await system.run(engine.getReadModel())).threads.find(
+        (thread) => thread.id === "thread-archive",
+      )?.starredAt,
+    ).toBe(starredAt);
+
+    await system.run(
+      engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-unstar"),
+        threadId: ThreadId.make("thread-archive"),
+        starredAt: null,
+      }),
+    );
+    expect(
+      (await system.run(engine.getReadModel())).threads.find(
+        (thread) => thread.id === "thread-archive",
+      )?.starredAt,
+    ).toBeNull();
+
     await system.dispose();
   });
 

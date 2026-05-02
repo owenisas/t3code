@@ -3,6 +3,7 @@ import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/c
 import type { Thread } from "../types";
 
 export type ThreadSortInput = Pick<Thread, "createdAt" | "updatedAt"> & {
+  starredAt?: string | null;
   latestUserMessageAt?: string | null;
   messages?: Pick<Thread["messages"][number], "createdAt" | "role">[];
 };
@@ -52,6 +53,11 @@ export function sortThreads<T extends Pick<Thread, "id"> & ThreadSortInput>(
   sortOrder: SidebarThreadSortOrder,
 ): T[] {
   return threads.toSorted((left, right) => {
+    const leftIsStarred = left.starredAt != null;
+    const rightIsStarred = right.starredAt != null;
+    if (leftIsStarred !== rightIsStarred) {
+      return rightIsStarred ? 1 : -1;
+    }
     const rightTimestamp = getThreadSortTimestamp(right, sortOrder);
     const leftTimestamp = getThreadSortTimestamp(left, sortOrder);
     const byTimestamp =

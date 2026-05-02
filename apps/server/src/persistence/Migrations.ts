@@ -46,6 +46,7 @@ import Migration0030 from "./Migrations/029_RepairProjectionPendingApprovals.ts"
 import Migration0031 from "./Migrations/031_ProjectionThreadYolo.ts";
 import Migration0032 from "./Migrations/026_CanonicalizeModelSelectionOptions.ts";
 import Migration0033 from "./Migrations/033_ProjectionThreadQueuedFollowUpInteractionMode.ts";
+import Migration0034 from "./Migrations/034_ProjectionThreadsStarredAt.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -91,6 +92,7 @@ export const migrationEntries = [
   [31, "ProjectionThreadYolo", Migration0031],
   [32, "CanonicalizeModelSelectionOptions", Migration0032],
   [33, "ProjectionThreadQueuedFollowUpInteractionMode", Migration0033],
+  [34, "ProjectionThreadsStarredAt", Migration0034],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>
