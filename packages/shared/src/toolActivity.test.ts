@@ -38,6 +38,43 @@ describe("toolActivity", () => {
     });
   });
 
+  it("uses snake_case Cursor raw input paths for read-file tools", () => {
+    expect(
+      deriveToolActivityPresentation({
+        itemType: "dynamic_tool_call",
+        title: "Read File",
+        data: {
+          kind: "read",
+          rawInput: {
+            file_path: "/tmp/cursor-app.ts",
+          },
+        },
+        fallbackSummary: "Read File",
+      }),
+    ).toEqual({
+      summary: "Read file",
+      detail: "/tmp/cursor-app.ts",
+    });
+  });
+
+  it("uses Cursor command aliases for command tools", () => {
+    expect(
+      deriveToolActivityPresentation({
+        itemType: "command_execution",
+        title: "Terminal",
+        data: {
+          rawInput: {
+            cmd: "rg -n TODO apps",
+          },
+        },
+        fallbackSummary: "Terminal",
+      }),
+    ).toEqual({
+      summary: "Ran command",
+      detail: "rg -n TODO apps",
+    });
+  });
+
   it("drops duplicated generic read-file detail when no path is available", () => {
     expect(
       deriveToolActivityPresentation({

@@ -57,6 +57,10 @@ function extractToolCommand(data: Record<string, unknown> | undefined, title: st
     normalizeCommandValue(itemResult?.command),
     normalizeCommandValue(data?.command),
     normalizeCommandValue(rawInput?.command),
+    normalizeCommandValue(rawInput?.cmd),
+    normalizeCommandValue(rawInput?.commandLine),
+    normalizeCommandValue(rawInput?.shellCommand),
+    normalizeCommandValue(rawInput?.script),
   ];
   const direct = candidates.find((candidate) => candidate !== undefined);
   if (direct) {
@@ -105,7 +109,21 @@ function collectPaths(value: unknown, paths: string[], seen: Set<string>, depth:
   if (!record) {
     return;
   }
-  for (const key of ["path", "filePath", "relativePath", "filename", "newPath", "oldPath"]) {
+  for (const key of [
+    "path",
+    "filePath",
+    "file_path",
+    "relativePath",
+    "relative_path",
+    "filename",
+    "fileName",
+    "newPath",
+    "new_path",
+    "oldPath",
+    "old_path",
+    "targetFile",
+    "target_file",
+  ]) {
     const candidate = maybePathLike(asTrimmedString(record[key]));
     if (!candidate || seen.has(candidate)) {
       continue;

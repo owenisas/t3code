@@ -1077,6 +1077,56 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.command).toBeUndefined();
   });
 
+  it("extracts Cursor command aliases from raw tool input", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "cursor-command-alias",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "tool-command-alias",
+            kind: "execute",
+            rawInput: {
+              cmd: "rg -n TODO apps",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.command).toBe("rg -n TODO apps");
+  });
+
+  it("extracts Cursor snake_case read-file paths from raw tool input", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "cursor-read-file",
+        kind: "tool.completed",
+        summary: "Read file",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Read file",
+          detail: "/tmp/cursor-app.ts",
+          data: {
+            toolCallId: "tool-read-file",
+            kind: "read",
+            rawInput: {
+              file_path: "/tmp/cursor-app.ts",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.detail).toBe("/tmp/cursor-app.ts");
+    expect(entry?.changedFiles).toEqual(["/tmp/cursor-app.ts"]);
+  });
+
   it("collapses legacy completed tool rows that are missing tool metadata", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

@@ -164,7 +164,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       assert.isDefined(delta);
       if (delta?.type === "content.delta") {
         assert.equal(delta.payload.delta, "hello from mock");
-        assert.match(String(delta.itemId), /^assistant:mock-session-1:segment:0$/);
+        assert.match(String(delta.itemId), /^assistant:mock-session-1:segment:0:turn:[0-9a-f-]+$/);
       }
 
       const assistantCompleted = runtimeEvents.find(
@@ -180,6 +180,78 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           { step: "Inspect mock ACP state", status: "completed" },
           { step: "Implement the requested change", status: "inProgress" },
         ]);
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("scopes assistant item ids by turn to avoid reused ACP segment collisions", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-assistant-id-scope-thread");
+
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const twoTurnsCompleted = yield* Deferred.make<void>();
+      let completedTurns = 0;
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          const reachedTwo = yield* Effect.sync(() => {
+            runtimeEvents.push(event);
+            if (event.type !== "turn.completed") {
+              return false;
+            }
+            completedTurns += 1;
+            return completedTurns === 2;
+          });
+          if (reachedTwo) {
+            yield* Deferred.succeed(twoTurnsCompleted, undefined);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: "cursor",
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { provider: "cursor", model: "default" },
+      });
+
+      const firstTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "first turn",
+        attachments: [],
+      });
+      const secondTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "second turn",
+        attachments: [],
+      });
+
+      yield* Deferred.await(twoTurnsCompleted);
+      yield* Fiber.interrupt(runtimeEventsFiber);
+
+      const assistantDeltas = runtimeEvents.filter(
+        (event) => event.type === "content.delta" && event.payload.streamKind === "assistant_text",
+      );
+      const firstTurnDelta = assistantDeltas.find(
+        (event) => String(event.turnId) === String(firstTurn.turnId),
+      );
+      const secondTurnDelta = assistantDeltas.find(
+        (event) => String(event.turnId) === String(secondTurn.turnId),
+      );
+
+      assert.isDefined(firstTurnDelta);
+      assert.isDefined(secondTurnDelta);
+      if (firstTurnDelta?.type === "content.delta" && secondTurnDelta?.type === "content.delta") {
+        assert.include(String(firstTurnDelta.itemId), `:turn:${String(firstTurn.turnId)}`);
+        assert.include(String(secondTurnDelta.itemId), `:turn:${String(secondTurn.turnId)}`);
+        assert.notEqual(String(firstTurnDelta.itemId), String(secondTurnDelta.itemId));
       }
 
       yield* adapter.stopSession(threadId);
@@ -539,7 +611,10 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           if (contentDelta?.type === "content.delta") {
             assert.equal(String(contentDelta.turnId), String(turn.turnId));
             assert.equal(contentDelta.payload.delta, "hello from mock");
-            assert.equal(String(contentDelta.itemId), "assistant:mock-session-1:segment:0");
+            assert.equal(
+              String(contentDelta.itemId),
+              `assistant:mock-session-1:segment:0:turn:${String(turn.turnId)}`,
+            );
           }
         });
 

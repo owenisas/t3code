@@ -164,6 +164,72 @@ describe("AcpRuntimeModel", () => {
     }
   });
 
+  it("projects Cursor-style command aliases into command tool details", () => {
+    const result = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "tool-command-alias",
+        title: "Terminal",
+        kind: "execute",
+        status: "pending",
+        rawInput: {
+          cmd: "rg -n TODO apps",
+        },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(result.events[0]).toMatchObject({
+      _tag: "ToolCallUpdated",
+      toolCall: {
+        toolCallId: "tool-command-alias",
+        kind: "execute",
+        title: "Ran command",
+        status: "pending",
+        command: "rg -n TODO apps",
+        detail: "rg -n TODO apps",
+        data: {
+          command: "rg -n TODO apps",
+          rawInput: {
+            cmd: "rg -n TODO apps",
+          },
+        },
+      },
+    });
+  });
+
+  it("projects Cursor-style read file paths into read-file tool details", () => {
+    const result = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "tool-read-file",
+        title: "Read File",
+        kind: "read",
+        status: "pending",
+        rawInput: {
+          file_path: "/tmp/cursor-app.ts",
+        },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(result.events[0]).toMatchObject({
+      _tag: "ToolCallUpdated",
+      toolCall: {
+        toolCallId: "tool-read-file",
+        kind: "read",
+        title: "Read file",
+        status: "pending",
+        detail: "/tmp/cursor-app.ts",
+        data: {
+          rawInput: {
+            file_path: "/tmp/cursor-app.ts",
+          },
+        },
+      },
+    });
+  });
+
   it("trims padded current mode updates before emitting a mode change", () => {
     const result = parseSessionUpdateEvent({
       sessionId: "session-1",

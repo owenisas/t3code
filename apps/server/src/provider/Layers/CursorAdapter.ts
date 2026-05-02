@@ -113,6 +113,13 @@ interface CursorSessionContext {
   stopped: boolean;
 }
 
+function scopedAssistantItemId(activeTurnId: TurnId | undefined, itemId: string): string {
+  if (activeTurnId === undefined) {
+    return itemId;
+  }
+  return `${itemId}:turn:${String(activeTurnId)}`;
+}
+
 function settlePendingApprovalsAsCancelled(
   pendingApprovals: ReadonlyMap<ApprovalRequestId, PendingApproval>,
 ): Effect.Effect<void> {
@@ -803,25 +810,27 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
                   case "ModeChanged":
                     return;
                   case "AssistantItemStarted":
+                    const startedItemId = scopedAssistantItemId(ctx.activeTurnId, event.itemId);
                     yield* offerRuntimeEvent(
                       makeAcpAssistantItemEvent({
                         stamp: yield* makeEventStamp(),
                         provider: PROVIDER,
                         threadId: ctx.threadId,
                         turnId: ctx.activeTurnId,
-                        itemId: event.itemId,
+                        itemId: startedItemId,
                         lifecycle: "item.started",
                       }),
                     );
                     return;
                   case "AssistantItemCompleted":
+                    const completedItemId = scopedAssistantItemId(ctx.activeTurnId, event.itemId);
                     yield* offerRuntimeEvent(
                       makeAcpAssistantItemEvent({
                         stamp: yield* makeEventStamp(),
                         provider: PROVIDER,
                         threadId: ctx.threadId,
                         turnId: ctx.activeTurnId,
-                        itemId: event.itemId,
+                        itemId: completedItemId,
                         lifecycle: "item.completed",
                       }),
                     );
@@ -860,6 +869,9 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
                     );
                     return;
                   case "ContentDelta":
+                    const contentItemId = event.itemId
+                      ? scopedAssistantItemId(ctx.activeTurnId, event.itemId)
+                      : undefined;
                     yield* logNative(
                       ctx.threadId,
                       "session/update",
@@ -872,7 +884,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
                         provider: PROVIDER,
                         threadId: ctx.threadId,
                         turnId: ctx.activeTurnId,
-                        ...(event.itemId ? { itemId: event.itemId } : {}),
+                        ...(contentItemId ? { itemId: contentItemId } : {}),
                         text: event.text,
                         rawPayload: event.rawPayload,
                       }),

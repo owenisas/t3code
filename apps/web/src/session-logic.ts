@@ -859,6 +859,7 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
   const item = asRecord(data?.item);
   const itemResult = asRecord(item?.result);
   const itemInput = asRecord(item?.input);
+  const rawInput = asRecord(data?.rawInput);
   const itemType = asTrimmedString(payload?.itemType);
   const detail = asTrimmedString(payload?.detail);
   const candidates: unknown[] = [
@@ -866,6 +867,11 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
     itemInput?.command,
     itemResult?.command,
     data?.command,
+    rawInput?.command,
+    rawInput?.cmd,
+    rawInput?.commandLine,
+    rawInput?.shellCommand,
+    rawInput?.script,
     itemType === "command_execution" && detail ? stripTrailingExitCode(detail).output : null,
   ];
 
@@ -1068,15 +1074,23 @@ function collectChangedFiles(value: unknown, target: string[], seen: Set<string>
 
   pushChangedFile(target, seen, record.path);
   pushChangedFile(target, seen, record.filePath);
+  pushChangedFile(target, seen, record.file_path);
   pushChangedFile(target, seen, record.relativePath);
+  pushChangedFile(target, seen, record.relative_path);
   pushChangedFile(target, seen, record.filename);
+  pushChangedFile(target, seen, record.fileName);
   pushChangedFile(target, seen, record.newPath);
+  pushChangedFile(target, seen, record.new_path);
   pushChangedFile(target, seen, record.oldPath);
+  pushChangedFile(target, seen, record.old_path);
+  pushChangedFile(target, seen, record.targetFile);
+  pushChangedFile(target, seen, record.target_file);
 
   for (const nestedKey of [
     "item",
     "result",
     "input",
+    "rawInput",
     "data",
     "changes",
     "files",

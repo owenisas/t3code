@@ -202,9 +202,11 @@ function extractCommandFromTitle(title: string | undefined): string | undefined 
 
 function extractToolCallCommand(rawInput: unknown, title: string | undefined): string | undefined {
   if (isRecord(rawInput)) {
-    const directCommand = normalizeCommandValue(rawInput.command);
-    if (directCommand) {
-      return directCommand;
+    for (const key of ["command", "cmd", "commandLine", "shellCommand", "script"]) {
+      const command = normalizeCommandValue(rawInput[key]);
+      if (command) {
+        return command;
+      }
     }
     const executable = typeof rawInput.executable === "string" ? rawInput.executable.trim() : "";
     const args = normalizeCommandValue(rawInput.args);
