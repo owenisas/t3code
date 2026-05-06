@@ -1,4 +1,4 @@
-import type { ProviderKind, ThreadId } from "@t3tools/contracts";
+import type { ProviderDriverKind, ThreadId } from "@t3tools/contracts";
 import { Cause, Effect } from "effect";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
@@ -11,7 +11,7 @@ import type {
 
 function writeNativeAcpLog(input: {
   readonly nativeEventLogger: EventNdjsonLogger | undefined;
-  readonly provider: ProviderKind;
+  readonly provider: ProviderDriverKind;
   readonly threadId: ThreadId;
   readonly kind: "request" | "protocol" | "process";
   readonly payload: unknown;
@@ -52,7 +52,7 @@ function formatProcessLogPayload(event: AcpSessionProcessLogEvent) {
 
 export function makeAcpNativeLoggers(input: {
   readonly nativeEventLogger: EventNdjsonLogger | undefined;
-  readonly provider: ProviderKind;
+  readonly provider: ProviderDriverKind;
   readonly threadId: ThreadId;
 }): Pick<AcpSessionRuntimeOptions, "requestLogger" | "processLogger" | "protocolLogging"> {
   return {

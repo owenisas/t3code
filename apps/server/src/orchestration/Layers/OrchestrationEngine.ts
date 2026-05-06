@@ -35,6 +35,7 @@ import {
   OrchestrationCommandInvariantError,
   OrchestrationCommandPreviouslyRejectedError,
   type OrchestrationDispatchError,
+  type OrchestrationProjectorDecodeError,
 } from "../Errors.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
@@ -89,13 +90,25 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const projectionPipeline = yield* OrchestrationProjectionPipeline;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
 
-  let readModel = createEmptyReadModel(new Date().toISOString());
+  let commandReadModel = createEmptyReadModel(new Date().toISOString());
 
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
 
+  const projectEventsOntoReadModel = (
+    baseReadModel: OrchestrationReadModel,
+    events: ReadonlyArray<OrchestrationEvent>,
+  ): Effect.Effect<OrchestrationReadModel, OrchestrationProjectorDecodeError, never> =>
+    Effect.gen(function* () {
+      let nextReadModel = baseReadModel;
+      for (const event of events) {
+        nextReadModel = yield* projectEvent(nextReadModel, event);
+      }
+      return nextReadModel;
+    });
+
   const processEnvelope = (envelope: CommandEnvelope): Effect.Effect<void> => {
-    const dispatchStartSequence = readModel.snapshotSequence;
+    const dispatchStartSequence = commandReadModel.snapshotSequence;
     const processingStartedAtMs = Date.now();
     const aggregateRef = commandToAggregateRef(envelope.command);
     const baseMetricAttributes = {
@@ -110,11 +123,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         return;
       }
 
-      let nextReadModel = readModel;
-      for (const persistedEvent of persistedEvents) {
-        nextReadModel = yield* projectEvent(nextReadModel, persistedEvent);
-      }
-      readModel = nextReadModel;
+      commandReadModel = yield* projectEventsOntoReadModel(commandReadModel, persistedEvents);
 
       for (const persistedEvent of persistedEvents) {
         yield* PubSub.publish(eventPubSub, persistedEvent);
@@ -147,18 +156,18 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
-          readModel,
+          readModel: commandReadModel,
         });
         const eventBases = Array.isArray(eventBase) ? eventBase : [eventBase];
         const committedCommand = yield* sql
           .withTransaction(
             Effect.gen(function* () {
               const committedEvents: OrchestrationEvent[] = [];
-              let nextReadModel = readModel;
+              let nextCommandReadModel = commandReadModel;
 
               for (const nextEvent of eventBases) {
                 const savedEvent = yield* eventStore.append(nextEvent);
-                nextReadModel = yield* projectEvent(nextReadModel, savedEvent);
+                nextCommandReadModel = yield* projectEvent(nextCommandReadModel, savedEvent);
                 yield* projectionPipeline.projectEvent(savedEvent);
                 committedEvents.push(savedEvent);
               }
@@ -184,7 +193,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               return {
                 committedEvents,
                 lastSequence: lastSavedEvent.sequence,
-                nextReadModel,
+                nextCommandReadModel,
               } as const;
             }),
           )
@@ -196,7 +205,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             ),
           );
 
-        readModel = committedCommand.nextReadModel;
+        commandReadModel = committedCommand.nextCommandReadModel;
         for (const [index, event] of committedCommand.committedEvents.entries()) {
           yield* PubSub.publish(eventPubSub, event);
           if (index === 0) {
@@ -254,7 +263,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 ).pipe(
                   Effect.annotateLogs({
                     commandId: envelope.command.commandId,
-                    snapshotSequence: readModel.snapshotSequence,
+                    snapshotSequence: commandReadModel.snapshotSequence,
                   }),
                 ),
               ),
@@ -267,7 +276,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                   aggregateKind: aggregateRef.aggregateKind,
                   aggregateId: aggregateRef.aggregateId,
                   acceptedAt: new Date().toISOString(),
-                  resultSequence: readModel.snapshotSequence,
+                  resultSequence: commandReadModel.snapshotSequence,
                   status: "rejected",
                   error: error.message,
                 })
@@ -282,16 +291,13 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   };
 
   yield* projectionPipeline.bootstrap;
-  readModel = yield* projectionSnapshotQuery.getSnapshot();
+  commandReadModel = yield* projectionSnapshotQuery.getCommandReadModel();
 
   const worker = Effect.forever(Queue.take(commandQueue).pipe(Effect.flatMap(processEnvelope)));
   yield* Effect.forkScoped(worker);
   yield* Effect.logDebug("orchestration engine started").pipe(
-    Effect.annotateLogs({ sequence: readModel.snapshotSequence }),
+    Effect.annotateLogs({ sequence: commandReadModel.snapshotSequence }),
   );
-
-  const getReadModel: OrchestrationEngineShape["getReadModel"] = () =>
-    Effect.sync((): OrchestrationReadModel => readModel);
 
   const readEvents: OrchestrationEngineShape["readEvents"] = (fromSequenceExclusive) =>
     eventStore.readFromSequence(fromSequenceExclusive);
@@ -303,10 +309,13 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       return yield* Deferred.await(result);
     });
 
+  const getReadModel: OrchestrationEngineShape["getReadModel"] = () =>
+    Effect.sync(() => commandReadModel);
+
   return {
-    getReadModel,
     readEvents,
     dispatch,
+    getReadModel,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (wsServer, ProviderRuntimeIngestion, CheckpointReactor, etc.)
     // each independently receive all domain events.

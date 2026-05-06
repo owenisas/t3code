@@ -1,12 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  ProjectId,
+  ThreadId,
+  TurnId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { Effect, Exit, Layer, ManagedRuntime, Option, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  OrchestrationEngineService,
-  type OrchestrationEngineShape,
-} from "../../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../../persistence/Layers/ProviderSessionRuntime.ts";
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
@@ -17,7 +20,7 @@ import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 import { makeProviderSessionReaperLive } from "./ProviderSessionReaper.ts";
 
 const defaultModelSelection = {
-  provider: "codex",
+  instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5-codex",
 } as const;
 
@@ -86,6 +89,10 @@ function makeReadModel(
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
+      latestUserMessageAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
       latestTurn: null,
       messages: [],
       queuedFollowUps: [],
@@ -144,15 +151,21 @@ describe("ProviderSessionReaper", () => {
       listSessions: () => Effect.succeed([]),
       getCapabilities: () =>
         Effect.succeed({ sessionModelSwitch: "in-session", turnSteer: "native" }),
+      getInstanceInfo: (instanceId) => {
+        const driverKind = ProviderDriverKind.make(String(instanceId));
+        return Effect.succeed({
+          instanceId,
+          driverKind,
+          displayName: undefined,
+          enabled: true,
+          continuationIdentity: {
+            driverKind,
+            continuationKey: `${driverKind}:instance:${instanceId}`,
+          },
+        });
+      },
       rollbackConversation: () => unsupported(),
       streamEvents: Stream.empty,
-    };
-
-    const orchestrationEngine: OrchestrationEngineShape = {
-      getReadModel: () => Effect.succeed(input.readModel),
-      readEvents: () => Stream.empty,
-      dispatch: () => unsupported(),
-      streamDomainEvents: Stream.empty,
     };
 
     const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
@@ -168,7 +181,28 @@ describe("ProviderSessionReaper", () => {
       Layer.provideMerge(providerSessionDirectoryLayer),
       Layer.provideMerge(runtimeRepositoryLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, providerService)),
-      Layer.provideMerge(Layer.succeed(OrchestrationEngineService, orchestrationEngine)),
+      Layer.provideMerge(
+        Layer.succeed(ProjectionSnapshotQuery, {
+          getCommandReadModel: () => Effect.die("unused"),
+          getSnapshot: () => Effect.die("unused"),
+          getShellSnapshot: () => Effect.die("unused"),
+          getSnapshotSequence: () =>
+            Effect.succeed({ snapshotSequence: input.readModel.snapshotSequence }),
+          getCounts: () => Effect.die("unused"),
+          getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
+          getProjectShellById: () => Effect.die("unused"),
+          getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
+          getThreadCheckpointContext: () => Effect.die("unused"),
+          getThreadShellById: (threadId) =>
+            Effect.succeed(
+              input.readModel.threads.find((thread) => thread.id === threadId)
+                ? Option.some(input.readModel.threads.find((thread) => thread.id === threadId)!)
+                : Option.none(),
+            ),
+          getThreadDetailById: () => Effect.die("unused"),
+          getScheduledJobById: () => Effect.die("unused"),
+        }),
+      ),
       Layer.provideMerge(NodeServices.layer),
     );
 
@@ -201,6 +235,7 @@ describe("ProviderSessionReaper", () => {
       repository.upsert({
         threadId,
         providerName: "claudeAgent",
+        providerInstanceId: null,
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
@@ -248,6 +283,7 @@ describe("ProviderSessionReaper", () => {
       repository.upsert({
         threadId,
         providerName: "claudeAgent",
+        providerInstanceId: null,
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
@@ -294,6 +330,7 @@ describe("ProviderSessionReaper", () => {
       repository.upsert({
         threadId,
         providerName: "claudeAgent",
+        providerInstanceId: null,
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
@@ -340,6 +377,7 @@ describe("ProviderSessionReaper", () => {
       repository.upsert({
         threadId,
         providerName: "claudeAgent",
+        providerInstanceId: null,
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "stopped",
@@ -408,6 +446,7 @@ describe("ProviderSessionReaper", () => {
       repository.upsert({
         threadId: failedThreadId,
         providerName: "claudeAgent",
+        providerInstanceId: null,
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
@@ -422,6 +461,7 @@ describe("ProviderSessionReaper", () => {
       repository.upsert({
         threadId: reapedThreadId,
         providerName: "codex",
+        providerInstanceId: null,
         adapterKey: "codex",
         runtimeMode: "full-access",
         status: "running",
@@ -487,6 +527,7 @@ describe("ProviderSessionReaper", () => {
       repository.upsert({
         threadId: defectThreadId,
         providerName: "claudeAgent",
+        providerInstanceId: null,
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
@@ -501,6 +542,7 @@ describe("ProviderSessionReaper", () => {
       repository.upsert({
         threadId: reapedThreadId,
         providerName: "codex",
+        providerInstanceId: null,
         adapterKey: "codex",
         runtimeMode: "full-access",
         status: "running",

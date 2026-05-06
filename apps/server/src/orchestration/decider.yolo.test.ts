@@ -4,6 +4,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  ProviderInstanceId,
   ThreadId,
   YoloRunId,
 } from "@t3tools/contracts";
@@ -60,7 +61,7 @@ async function createReadModelWithActiveYolo(now: string) {
         projectId: asProjectId("project-yolo"),
         title: "Thread",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,

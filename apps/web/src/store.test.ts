@@ -1,12 +1,13 @@
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import {
   CheckpointRef,
-  DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_MODEL,
   EnvironmentId,
   EventId,
   MessageId,
   type OrchestrationShellSnapshot,
   ProjectId,
+  ProviderInstanceId,
   ScheduledJobId,
   ThreadId,
   TurnId,
@@ -20,6 +21,7 @@ import {
   applyShellEvent,
   applyOrchestrationEvent,
   applyOrchestrationEvents,
+  removeEnvironmentState,
   selectEnvironmentState,
   selectProjectsAcrossEnvironments,
   selectScheduledJobsAcrossEnvironments,
@@ -72,7 +74,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     projectId: ProjectId.make("project-1"),
     title: "Thread",
     modelSelection: {
-      provider: "codex",
+      instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5-codex",
     },
     runtimeMode: DEFAULT_RUNTIME_MODE,
@@ -101,7 +103,7 @@ function makeState(thread: Thread): AppState {
     name: "Project",
     cwd: "/tmp/project",
     defaultModelSelection: {
-      provider: "codex" as const,
+      instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5-codex",
     },
     createdAt: "2026-02-13T00:00:00.000Z",
@@ -244,7 +246,7 @@ function makeShellThread(
     projectId: ProjectId.make("project-1"),
     title: "Thread",
     modelSelection: {
-      provider: "codex",
+      instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5.3-codex",
     },
     runtimeMode: DEFAULT_RUNTIME_MODE,
@@ -273,7 +275,7 @@ function makeShellProject(
     workspaceRoot: "/tmp/project",
     repositoryIdentity: null,
     defaultModelSelection: {
-      provider: "codex",
+      instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5.3-codex",
     },
     createdAt: "2026-02-27T00:00:00.000Z",
@@ -292,7 +294,7 @@ function makeShellScheduledJob(
     title: "Daily review",
     prompt: "Review the project.",
     modelSelection: {
-      provider: "codex",
+      instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5.3-codex",
     },
     runtimeMode: DEFAULT_RUNTIME_MODE,
@@ -356,6 +358,39 @@ function makeEvent<T extends OrchestrationEvent["type"]>(
     ...overrides,
   } as Extract<OrchestrationEvent, { type: T }>;
 }
+
+describe("environment state removal", () => {
+  it("drops local state for removed environments", () => {
+    const removedThread = makeThread({
+      environmentId: remoteEnvironmentId,
+      id: ThreadId.make("thread-removed"),
+    });
+    const keptThread = makeThread({ id: ThreadId.make("thread-kept") });
+    const removedState = makeState(removedThread).environmentStateById[remoteEnvironmentId]!;
+    const keptState = makeState(keptThread).environmentStateById[localEnvironmentId]!;
+    const state: AppState = {
+      activeEnvironmentId: remoteEnvironmentId,
+      environmentStateById: {
+        [remoteEnvironmentId]: removedState,
+        [localEnvironmentId]: keptState,
+      },
+    };
+
+    const next = removeEnvironmentState(state, remoteEnvironmentId);
+
+    expect(next.activeEnvironmentId).toBeNull();
+    expect(next.environmentStateById[remoteEnvironmentId]).toBeUndefined();
+    expect(next.environmentStateById[localEnvironmentId]).toBe(keptState);
+  });
+
+  it("preserves active environment when removing a different environment", () => {
+    const state = makeState(makeThread());
+
+    const next = removeEnvironmentState(state, remoteEnvironmentId);
+
+    expect(next).toBe(state);
+  });
+});
 
 describe("thread selection memoization", () => {
   it("returns stable thread references for repeated reads of the same state", () => {
@@ -542,7 +577,7 @@ describe("store shell snapshot sync", () => {
         threads: [
           makeShellThread({
             modelSelection: {
-              provider: "claudeAgent",
+              instanceId: ProviderInstanceId.make("claudeAgent"),
               model: "claude-opus-4-6",
             },
           }),
@@ -635,8 +670,8 @@ describe("store shell snapshot sync", () => {
           name: "Project 2",
           cwd: "/tmp/project-2",
           defaultModelSelection: {
-            provider: "codex",
-            model: DEFAULT_MODEL_BY_PROVIDER.codex,
+            instanceId: ProviderInstanceId.make("codex"),
+            model: DEFAULT_MODEL,
           },
           createdAt: "2026-02-27T00:00:00.000Z",
           updatedAt: "2026-02-27T00:00:00.000Z",
@@ -648,8 +683,8 @@ describe("store shell snapshot sync", () => {
           name: "Project 1",
           cwd: "/tmp/project-1",
           defaultModelSelection: {
-            provider: "codex",
-            model: DEFAULT_MODEL_BY_PROVIDER.codex,
+            instanceId: ProviderInstanceId.make("codex"),
+            model: DEFAULT_MODEL,
           },
           createdAt: "2026-02-27T00:00:00.000Z",
           updatedAt: "2026-02-27T00:00:00.000Z",
@@ -851,8 +886,8 @@ describe("incremental orchestration updates", () => {
           name: "Project",
           cwd: "/tmp/project",
           defaultModelSelection: {
-            provider: "codex",
-            model: DEFAULT_MODEL_BY_PROVIDER.codex,
+            instanceId: ProviderInstanceId.make("codex"),
+            model: DEFAULT_MODEL,
           },
           createdAt: "2026-02-27T00:00:00.000Z",
           updatedAt: "2026-02-27T00:00:00.000Z",
@@ -868,8 +903,8 @@ describe("incremental orchestration updates", () => {
         title: "Project Recreated",
         workspaceRoot: "/tmp/project",
         defaultModelSelection: {
-          provider: "codex",
-          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          instanceId: ProviderInstanceId.make("codex"),
+          model: DEFAULT_MODEL,
         },
         scripts: [],
         createdAt: "2026-02-27T00:00:01.000Z",
@@ -906,8 +941,8 @@ describe("incremental orchestration updates", () => {
           name: "Project 1",
           cwd: "/tmp/project-1",
           defaultModelSelection: {
-            provider: "codex",
-            model: DEFAULT_MODEL_BY_PROVIDER.codex,
+            instanceId: ProviderInstanceId.make("codex"),
+            model: DEFAULT_MODEL,
           },
           createdAt: "2026-02-27T00:00:00.000Z",
           updatedAt: "2026-02-27T00:00:00.000Z",
@@ -919,8 +954,8 @@ describe("incremental orchestration updates", () => {
           name: "Project 2",
           cwd: "/tmp/project-2",
           defaultModelSelection: {
-            provider: "codex",
-            model: DEFAULT_MODEL_BY_PROVIDER.codex,
+            instanceId: ProviderInstanceId.make("codex"),
+            model: DEFAULT_MODEL,
           },
           createdAt: "2026-02-27T00:00:00.000Z",
           updatedAt: "2026-02-27T00:00:00.000Z",
@@ -936,8 +971,8 @@ describe("incremental orchestration updates", () => {
         projectId: recreatedProjectId,
         title: "Recovered thread",
         modelSelection: {
-          provider: "codex",
-          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          instanceId: ProviderInstanceId.make("codex"),
+          model: DEFAULT_MODEL,
         },
         runtimeMode: DEFAULT_RUNTIME_MODE,
         interactionMode: DEFAULT_INTERACTION_MODE,

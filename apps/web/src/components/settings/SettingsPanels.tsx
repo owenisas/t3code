@@ -2,37 +2,26 @@ import {
   ArchiveIcon,
   ArchiveX,
   CalendarClockIcon,
-  CheckCircle2Icon,
-  ChevronDownIcon,
   Clock3Icon,
-  InfoIcon,
   LoaderIcon,
   PlusIcon,
   RefreshCwIcon,
-  PlayIcon,
-  PencilIcon,
-  PauseIcon,
-  Trash2Icon,
-  XIcon,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
-  CommandId,
-  PROVIDER_DISPLAY_NAMES,
-  ScheduledJobId,
+  defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
-  type ThreadFollowUpMode,
+  PROVIDER_DISPLAY_NAMES,
+  ProviderDriverKind,
+  type ProviderInstanceConfig,
+  type ProviderInstanceId,
   type ScopedThreadRef,
-  type ProviderKind,
-  type ProviderOptionSelection,
-  type ServerProvider,
-  type ServerProviderModel,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
-import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import { createModelSelection } from "@t3tools/shared/model";
 import { Equal } from "effect";
 import { APP_VERSION } from "../../branding";
 import {
@@ -43,7 +32,6 @@ import {
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
-import { getComposerProviderState } from "../chat/composerProviderState";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { isElectron } from "../../env";
@@ -55,12 +43,14 @@ import {
   useDesktopUpdateState,
 } from "../../lib/desktopUpdateReactQuery";
 import {
-  MAX_CUSTOM_MODEL_LENGTH,
-  getCustomModelOptionsByProvider,
+  getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
+import {
+  deriveProviderInstanceEntries,
+  sortProviderInstanceEntries,
+} from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
-import { ensureEnvironmentApi } from "../../environmentApi";
 import { useShallow } from "zustand/react/shallow";
 import {
   selectProjectsAcrossEnvironments,
@@ -69,25 +59,24 @@ import {
   useStore,
 } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
-import { cn } from "../../lib/utils";
-import { buildThreadRouteParams } from "../../threadRoutes";
-import {
-  buildScheduledJobCreateCommand,
-  buildScheduledJobDeleteCommand,
-  buildScheduledJobPauseCommand,
-  buildScheduledJobResumeCommand,
-  buildScheduledJobRunNowCommand,
-} from "../../scheduledJobs";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
-import { Input } from "../ui/input";
+import { DraftInput } from "../ui/draft-input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+import {
+  canOneClickUpdateProviderCandidate,
+  collectProviderUpdateCandidates,
+  hasOneClickUpdateProviderCandidate,
+  isProviderUpdateActive,
+  type ProviderUpdateCandidate,
+} from "../ProviderUpdateLaunchNotification.logic";
+import { ProviderInstanceCard } from "./ProviderInstanceCard";
+import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
+import { buildProviderInstanceUpdatePatch } from "./SettingsPanels.logic";
 import {
   SettingResetButton,
   SettingsPageContainer,
@@ -98,11 +87,9 @@ import {
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
   useServerAvailableEditors,
-  useServerKeybindingsConfigPath,
   useServerObservability,
   useServerProviders,
 } from "../../rpc/serverState";
-import { formatProviderKindLabel } from "../../providerModels";
 
 const THEME_OPTIONS = [
   {
@@ -125,133 +112,27 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
-const ACTIVE_TURN_FOLLOW_UP_MODE_LABELS: Record<ThreadFollowUpMode, string> = {
-  steer: "Steer running turn",
-  queue: "Queue behind running turn",
-};
+const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 
-type InstallProviderSettings = {
-  provider: ProviderKind;
-  title: string;
-  badgeLabel?: string;
-  binaryPlaceholder: string;
-  binaryDescription: ReactNode;
-  serverUrlPlaceholder?: string;
-  serverUrlDescription?: ReactNode;
-  serverPasswordPlaceholder?: string;
-  serverPasswordDescription?: ReactNode;
-  homePathKey?: "codexHomePath";
-  homePlaceholder?: string;
-  homeDescription?: ReactNode;
-};
-
-const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
-  {
-    provider: "codex",
-    title: "Codex",
-    binaryPlaceholder: "Codex binary path",
-    binaryDescription: "Path to the Codex binary",
-    homePathKey: "codexHomePath",
-    homePlaceholder: "CODEX_HOME",
-    homeDescription: "Optional custom Codex home and config directory.",
-  },
-  {
-    provider: "claudeAgent",
-    title: "Claude",
-    binaryPlaceholder: "Claude binary path",
-    binaryDescription: "Path to the Claude binary",
-  },
-  {
-    provider: "cursor",
-    title: "Cursor",
-    badgeLabel: "Early Access",
-    binaryPlaceholder: "Cursor agent binary path",
-    binaryDescription: "Path to the Cursor agent binary",
-  },
-  {
-    provider: "opencode",
-    title: "OpenCode",
-    binaryPlaceholder: "OpenCode binary path",
-    binaryDescription: "Path to the OpenCode binary",
-    serverUrlPlaceholder: "http://127.0.0.1:4096",
-    serverUrlDescription: "Leave blank to let T3 Code spawn the server when needed",
-    serverPasswordPlaceholder: "Server password (optional)",
-    serverPasswordDescription:
-      "If your OpenCode server requires authentication, enter the password here. NOTE: Stored in plain text on disk",
-  },
-] as const;
-
-const PROVIDER_STATUS_STYLES = {
-  disabled: {
-    dot: "bg-amber-400",
-  },
-  error: {
-    dot: "bg-destructive",
-  },
-  ready: {
-    dot: "bg-success",
-  },
-  warning: {
-    dot: "bg-warning",
-  },
-} as const;
-
-function getProviderSummary(provider: ServerProvider | undefined) {
-  if (!provider) {
-    return {
-      headline: "Checking provider status",
-      detail: "Waiting for the server to report installation and authentication details.",
-    };
-  }
-  if (!provider.enabled) {
-    return {
-      headline: "Disabled",
-      detail:
-        provider.message ?? "This provider is installed but disabled for new sessions in T3 Code.",
-    };
-  }
-  if (!provider.installed) {
-    return {
-      headline: "Not found",
-      detail: provider.message ?? "CLI not detected on PATH.",
-    };
-  }
-  if (provider.auth.status === "authenticated") {
-    const authLabel = provider.auth.label ?? provider.auth.type;
-    return {
-      headline: authLabel ? `Authenticated · ${authLabel}` : "Authenticated",
-      detail: provider.message ?? null,
-    };
-  }
-  if (provider.auth.status === "unauthenticated") {
-    return {
-      headline: "Not authenticated",
-      detail: provider.message ?? null,
-    };
-  }
-  if (provider.status === "warning") {
-    return {
-      headline: "Needs attention",
-      detail:
-        provider.message ?? "The provider is installed, but the server could not fully verify it.",
-    };
-  }
-  if (provider.status === "error") {
-    return {
-      headline: "Unavailable",
-      detail: provider.message ?? "The provider failed its startup checks.",
-    };
-  }
-  return {
-    headline: "Available",
-    detail: provider.message ?? "Installed and ready, but authentication could not be verified.",
-  };
+function withoutProviderInstanceKey<V>(
+  record: Readonly<Record<ProviderInstanceId, V>> | undefined,
+  key: ProviderInstanceId,
+): Record<ProviderInstanceId, V> {
+  const next = { ...record } as Record<ProviderInstanceId, V>;
+  delete next[key];
+  return next;
 }
 
-function getProviderVersionLabel(version: string | null | undefined) {
-  if (!version) return null;
-  return version.startsWith("v") ? version : `v${version}`;
+function withoutProviderInstanceFavorites(
+  favorites: ReadonlyArray<{ readonly provider: ProviderInstanceId; readonly model: string }>,
+  instanceId: ProviderInstanceId,
+) {
+  return favorites.filter((favorite) => favorite.provider !== instanceId);
 }
+
+const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
+  provider: definition.value,
+}));
 
 function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }) {
   useRelativeTimeTick();
@@ -481,17 +362,12 @@ function AboutVersionSection() {
 export function useSettingsRestore(onRestored?: () => void) {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
-  const { resetSettings } = useUpdateSettings();
+  const { updateSettings } = useUpdateSettings();
 
   const isGitWritingModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
-  const areProviderSettingsDirty = PROVIDER_SETTINGS.some((providerSettings) => {
-    const currentSettings = settings.providers[providerSettings.provider];
-    const defaultSettings = DEFAULT_UNIFIED_SETTINGS.providers[providerSettings.provider];
-    return !Equal.equals(currentSettings, defaultSettings);
-  });
 
   const changedSettingLabels = useMemo(
     () => [
@@ -502,8 +378,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap
         ? ["Diff line wrapping"]
         : []),
+      ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
+        ? ["Diff whitespace changes"]
+        : []),
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
-        ? ["Task sidebar"]
+        ? ["Auto-open task panel"]
         : []),
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
@@ -514,9 +393,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
-      ...(settings.activeTurnFollowUpMode !== DEFAULT_UNIFIED_SETTINGS.activeTurnFollowUpMode
-        ? ["Running turn follow-up"]
-        : []),
       ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
         ? ["Archive confirmation"]
         : []),
@@ -524,17 +400,15 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Delete confirmation"]
         : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
-      ...(areProviderSettingsDirty ? ["Providers"] : []),
     ],
     [
-      areProviderSettingsDirty,
       isGitWritingModelDirty,
-      settings.activeTurnFollowUpMode,
       settings.autoOpenPlanSidebar,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
+      settings.diffIgnoreWhitespace,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
       settings.timestampFormat,
@@ -553,9 +427,20 @@ export function useSettingsRestore(onRestored?: () => void) {
     if (!confirmed) return;
 
     setTheme("system");
-    resetSettings();
+    updateSettings({
+      timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+      diffWordWrap: DEFAULT_UNIFIED_SETTINGS.diffWordWrap,
+      diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
+      autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
+      enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+      defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
+      addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+      confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
+      confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
+      textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+    });
     onRestored?.();
-  }, [changedSettingLabels, onRestored, resetSettings, setTheme]);
+  }, [changedSettingLabels, onRestored, setTheme, updateSettings]);
 
   return {
     changedSettingLabels,
@@ -568,78 +453,14 @@ export function GeneralSettingsPanel() {
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
   const [openingPathByTarget, setOpeningPathByTarget] = useState({
-    keybindings: false,
     logsDirectory: false,
   });
   const [openPathErrorByTarget, setOpenPathErrorByTarget] = useState<
-    Partial<Record<"keybindings" | "logsDirectory", string | null>>
+    Partial<Record<"logsDirectory", string | null>>
   >({});
-  const [openProviderDetails, setOpenProviderDetails] = useState<Record<ProviderKind, boolean>>({
-    codex: Boolean(
-      settings.providers.codex.binaryPath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.binaryPath ||
-      settings.providers.codex.homePath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.homePath ||
-      settings.providers.codex.customModels.length > 0,
-    ),
-    claudeAgent: Boolean(
-      settings.providers.claudeAgent.binaryPath !==
-        DEFAULT_UNIFIED_SETTINGS.providers.claudeAgent.binaryPath ||
-      settings.providers.claudeAgent.customModels.length > 0 ||
-      settings.providers.claudeAgent.launchArgs !== "",
-    ),
-    cursor: Boolean(
-      settings.providers.cursor.binaryPath !==
-        DEFAULT_UNIFIED_SETTINGS.providers.cursor.binaryPath ||
-      settings.providers.cursor.customModels.length > 0,
-    ),
-    opencode: Boolean(
-      settings.providers.opencode.binaryPath !==
-        DEFAULT_UNIFIED_SETTINGS.providers.opencode.binaryPath ||
-      settings.providers.opencode.serverUrl !==
-        DEFAULT_UNIFIED_SETTINGS.providers.opencode.serverUrl ||
-      settings.providers.opencode.serverPassword !==
-        DEFAULT_UNIFIED_SETTINGS.providers.opencode.serverPassword ||
-      settings.providers.opencode.customModels.length > 0,
-    ),
-  });
-  const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
-    Record<ProviderKind, string>
-  >({
-    codex: "",
-    claudeAgent: "",
-    cursor: "",
-    opencode: "",
-  });
-  const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
-    Partial<Record<ProviderKind, string | null>>
-  >({});
-  const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
-  const refreshingRef = useRef(false);
-  const modelListRefs = useRef<Partial<Record<ProviderKind, HTMLDivElement | null>>>({});
-  const refreshProviders = useCallback(() => {
-    if (refreshingRef.current) return;
-    refreshingRef.current = true;
-    setIsRefreshingProviders(true);
-    void ensureLocalApi()
-      .server.refreshProviders()
-      .catch((error: unknown) => {
-        console.warn("Failed to refresh providers", error);
-      })
-      .finally(() => {
-        refreshingRef.current = false;
-        setIsRefreshingProviders(false);
-      });
-  }, []);
-
-  const keybindingsConfigPath = useServerKeybindingsConfigPath();
   const availableEditors = useServerAvailableEditors();
   const observability = useServerObservability();
   const serverProviders = useServerProviders();
-  const visibleProviderSettings = PROVIDER_SETTINGS.filter(
-    (providerSettings) =>
-      providerSettings.provider !== "cursor" ||
-      serverProviders.some((provider) => provider.provider === "cursor"),
-  );
-  const codexHomePath = settings.providers.codex.homePath;
   const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
   const diagnosticsDescription = (() => {
     const exports: string[] = [];
@@ -654,13 +475,21 @@ export function GeneralSettingsPanel() {
   })();
 
   const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
-  const textGenProvider = textGenerationModelSelection.provider;
+  const textGenInstanceId = textGenerationModelSelection.instanceId;
   const textGenModel = textGenerationModelSelection.model;
   const textGenModelOptions = textGenerationModelSelection.options;
-  const gitModelOptionsByProvider = getCustomModelOptionsByProvider(
+  const gitModelInstanceEntries = sortProviderInstanceEntries(
+    deriveProviderInstanceEntries(serverProviders),
+  );
+  const textGenInstanceEntry = gitModelInstanceEntries.find(
+    (entry) => entry.instanceId === textGenInstanceId,
+  );
+  const textGenProvider: ProviderDriverKind =
+    textGenInstanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
+  const gitModelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     serverProviders,
-    textGenProvider,
+    textGenInstanceId,
     textGenModel,
   );
   const isGitWritingModelDirty = !Equal.equals(
@@ -669,7 +498,7 @@ export function GeneralSettingsPanel() {
   );
 
   const openInPreferredEditor = useCallback(
-    (target: "keybindings" | "logsDirectory", path: string | null, failureMessage: string) => {
+    (target: "logsDirectory", path: string | null, failureMessage: string) => {
       if (!path) return;
       setOpenPathErrorByTarget((existing) => ({ ...existing, [target]: null }));
       setOpeningPathByTarget((existing) => ({ ...existing, [target]: true }));
@@ -699,160 +528,12 @@ export function GeneralSettingsPanel() {
     [availableEditors],
   );
 
-  const openKeybindingsFile = useCallback(() => {
-    openInPreferredEditor("keybindings", keybindingsConfigPath, "Unable to open keybindings file.");
-  }, [keybindingsConfigPath, openInPreferredEditor]);
-
   const openLogsDirectory = useCallback(() => {
     openInPreferredEditor("logsDirectory", logsDirectoryPath, "Unable to open logs folder.");
   }, [logsDirectoryPath, openInPreferredEditor]);
 
-  const openKeybindingsError = openPathErrorByTarget.keybindings ?? null;
   const openDiagnosticsError = openPathErrorByTarget.logsDirectory ?? null;
-  const isOpeningKeybindings = openingPathByTarget.keybindings;
   const isOpeningLogsDirectory = openingPathByTarget.logsDirectory;
-
-  const addCustomModel = useCallback(
-    (provider: ProviderKind) => {
-      const customModelInput = customModelInputByProvider[provider];
-      const customModels = settings.providers[provider].customModels;
-      const normalized = normalizeModelSlug(customModelInput, provider);
-      if (!normalized) {
-        setCustomModelErrorByProvider((existing) => ({
-          ...existing,
-          [provider]: "Enter a model slug.",
-        }));
-        return;
-      }
-      if (
-        serverProviders
-          .find((candidate) => candidate.provider === provider)
-          ?.models.some((option) => !option.isCustom && option.slug === normalized)
-      ) {
-        setCustomModelErrorByProvider((existing) => ({
-          ...existing,
-          [provider]: "That model is already built in.",
-        }));
-        return;
-      }
-      if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
-        setCustomModelErrorByProvider((existing) => ({
-          ...existing,
-          [provider]: `Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`,
-        }));
-        return;
-      }
-      if (customModels.includes(normalized)) {
-        setCustomModelErrorByProvider((existing) => ({
-          ...existing,
-          [provider]: "That custom model is already saved.",
-        }));
-        return;
-      }
-
-      updateSettings({
-        providers: {
-          ...settings.providers,
-          [provider]: {
-            ...settings.providers[provider],
-            customModels: [...customModels, normalized],
-          },
-        },
-      });
-      setCustomModelInputByProvider((existing) => ({
-        ...existing,
-        [provider]: "",
-      }));
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: null,
-      }));
-
-      const el = modelListRefs.current[provider];
-      if (!el) return;
-      const scrollToEnd = () => el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-      requestAnimationFrame(scrollToEnd);
-      const observer = new MutationObserver(() => {
-        scrollToEnd();
-        observer.disconnect();
-      });
-      observer.observe(el, { childList: true, subtree: true });
-      setTimeout(() => observer.disconnect(), 2_000);
-    },
-    [customModelInputByProvider, serverProviders, settings, updateSettings],
-  );
-
-  const removeCustomModel = useCallback(
-    (provider: ProviderKind, slug: string) => {
-      updateSettings({
-        providers: {
-          ...settings.providers,
-          [provider]: {
-            ...settings.providers[provider],
-            customModels: settings.providers[provider].customModels.filter(
-              (model) => model !== slug,
-            ),
-          },
-        },
-      });
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: null,
-      }));
-    },
-    [settings, updateSettings],
-  );
-
-  const providerCards = visibleProviderSettings.map((providerSettings) => {
-    const liveProvider = serverProviders.find(
-      (candidate) => candidate.provider === providerSettings.provider,
-    );
-    const providerConfig = settings.providers[providerSettings.provider];
-    const defaultProviderConfig = DEFAULT_UNIFIED_SETTINGS.providers[providerSettings.provider];
-    const statusKey = liveProvider?.status ?? (providerConfig.enabled ? "warning" : "disabled");
-    const summary = getProviderSummary(liveProvider);
-    const models: ReadonlyArray<ServerProviderModel> =
-      liveProvider?.models ??
-      providerConfig.customModels.map((slug) => ({
-        slug,
-        name: slug,
-        isCustom: true,
-        capabilities: null,
-      }));
-
-    return {
-      provider: providerSettings.provider,
-      title: providerSettings.title,
-      badgeLabel: providerSettings.badgeLabel,
-      binaryPlaceholder: providerSettings.binaryPlaceholder,
-      binaryDescription: providerSettings.binaryDescription,
-      serverUrlPlaceholder: providerSettings.serverUrlPlaceholder,
-      serverUrlDescription: providerSettings.serverUrlDescription,
-      serverPasswordPlaceholder: providerSettings.serverPasswordPlaceholder,
-      serverPasswordDescription: providerSettings.serverPasswordDescription,
-      homePathKey: providerSettings.homePathKey,
-      homePlaceholder: providerSettings.homePlaceholder,
-      homeDescription: providerSettings.homeDescription,
-      binaryPathValue: providerConfig.binaryPath,
-      serverUrlValue: "serverUrl" in providerConfig ? providerConfig.serverUrl : "",
-      serverPasswordValue: "serverPassword" in providerConfig ? providerConfig.serverPassword : "",
-      isDirty: !Equal.equals(providerConfig, defaultProviderConfig),
-      liveProvider,
-      models,
-      providerConfig,
-      statusStyle: PROVIDER_STATUS_STYLES[statusKey],
-      summary,
-      versionLabel: getProviderVersionLabel(liveProvider?.version),
-    };
-  });
-
-  const lastCheckedAt =
-    serverProviders.length > 0
-      ? serverProviders.reduce(
-          (latest, provider) => (provider.checkedAt > latest ? provider.checkedAt : latest),
-          serverProviders[0]!.checkedAt,
-        )
-      : null;
 
   return (
     <SettingsPageContainer>
@@ -957,6 +638,32 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          title="Hide whitespace changes"
+          description="Set whether the diff panel ignores whitespace-only edits by default."
+          resetAction={
+            settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace ? (
+              <SettingResetButton
+                label="diff whitespace changes"
+                onClick={() =>
+                  updateSettings({
+                    diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.diffIgnoreWhitespace}
+              onCheckedChange={(checked) =>
+                updateSettings({ diffIgnoreWhitespace: Boolean(checked) })
+              }
+              aria-label="Hide whitespace changes by default"
+            />
+          }
+        />
+
+        <SettingsRow
           title="Assistant output"
           description="Show token-by-token output while a response is in progress."
           resetAction={
@@ -984,12 +691,12 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Task sidebar"
-          description="Open the plan and task sidebar automatically when steps appear."
+          title="Auto-open task panel"
+          description="Open the right-side plan and task panel automatically when steps appear."
           resetAction={
             settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar ? (
               <SettingResetButton
-                label="task sidebar"
+                label="auto-open task panel"
                 onClick={() =>
                   updateSettings({
                     autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
@@ -1004,7 +711,7 @@ export function GeneralSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ autoOpenPlanSidebar: Boolean(checked) })
               }
-              aria-label="Open the task sidebar automatically"
+              aria-label="Open the task panel automatically"
             />
           }
         />
@@ -1067,55 +774,14 @@ export function GeneralSettingsPanel() {
             ) : null
           }
           control={
-            <Input
+            <DraftInput
               className="w-full sm:w-72"
               value={settings.addProjectBaseDirectory}
-              onChange={(event) => updateSettings({ addProjectBaseDirectory: event.target.value })}
+              onCommit={(next) => updateSettings({ addProjectBaseDirectory: next })}
               placeholder="~/"
               spellCheck={false}
               aria-label="Add project base directory"
             />
-          }
-        />
-
-        <SettingsRow
-          title="Running turn follow-up"
-          description="Choose what the main send action does while the current turn is still responding."
-          resetAction={
-            settings.activeTurnFollowUpMode !== DEFAULT_UNIFIED_SETTINGS.activeTurnFollowUpMode ? (
-              <SettingResetButton
-                label="running turn follow-up"
-                onClick={() =>
-                  updateSettings({
-                    activeTurnFollowUpMode: DEFAULT_UNIFIED_SETTINGS.activeTurnFollowUpMode,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.activeTurnFollowUpMode}
-              onValueChange={(value) => {
-                if (value === "steer" || value === "queue") {
-                  updateSettings({ activeTurnFollowUpMode: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-56" aria-label="Running turn follow-up mode">
-                <SelectValue>
-                  {ACTIVE_TURN_FOLLOW_UP_MODE_LABELS[settings.activeTurnFollowUpMode]}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="steer">
-                  {ACTIVE_TURN_FOLLOW_UP_MODE_LABELS.steer}
-                </SelectItem>
-                <SelectItem hideIndicator value="queue">
-                  {ACTIVE_TURN_FOLLOW_UP_MODE_LABELS.queue}
-                </SelectItem>
-              </SelectPopup>
-            </Select>
           }
         />
 
@@ -1190,19 +856,19 @@ export function GeneralSettingsPanel() {
           control={
             <div className="flex flex-wrap items-center justify-end gap-1.5">
               <ProviderModelPicker
-                provider={textGenProvider}
+                activeInstanceId={textGenInstanceId}
                 model={textGenModel}
                 lockedProvider={null}
-                providers={serverProviders}
-                modelOptionsByProvider={gitModelOptionsByProvider}
+                instanceEntries={gitModelInstanceEntries}
+                modelOptionsByInstance={gitModelOptionsByInstance}
                 triggerVariant="outline"
                 triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-                onProviderModelChange={(provider, model) => {
+                onInstanceModelChange={(instanceId, model) => {
                   updateSettings({
                     textGenerationModelSelection: resolveAppModelSelectionState(
                       {
                         ...settings,
-                        textGenerationModelSelection: createModelSelection(provider, model),
+                        textGenerationModelSelection: createModelSelection(instanceId, model),
                       },
                       serverProviders,
                     ),
@@ -1212,8 +878,11 @@ export function GeneralSettingsPanel() {
               <TraitsPicker
                 provider={textGenProvider}
                 models={
-                  serverProviders.find((provider) => provider.provider === textGenProvider)
-                    ?.models ?? []
+                  // Use the exact instance's models (rather than the
+                  // first-kind-match) so a custom text-gen instance like
+                  // `codex_personal` gets its own model list, not the
+                  // default Codex one.
+                  textGenInstanceEntry?.models ?? []
                 }
                 model={textGenModel}
                 prompt=""
@@ -1228,7 +897,7 @@ export function GeneralSettingsPanel() {
                       {
                         ...settings,
                         textGenerationModelSelection: createModelSelection(
-                          textGenProvider,
+                          textGenInstanceId,
                           textGenModel,
                           nextOptions,
                         ),
@@ -1239,505 +908,6 @@ export function GeneralSettingsPanel() {
                 }}
               />
             </div>
-          }
-        />
-      </SettingsSection>
-
-      <SettingsSection
-        title="Providers"
-        headerAction={
-          <div className="flex items-center gap-1.5">
-            <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
-                    disabled={isRefreshingProviders}
-                    onClick={() => void refreshProviders()}
-                    aria-label="Refresh provider status"
-                  >
-                    {isRefreshingProviders ? (
-                      <LoaderIcon className="size-3 animate-spin" />
-                    ) : (
-                      <RefreshCwIcon className="size-3" />
-                    )}
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">Refresh provider status</TooltipPopup>
-            </Tooltip>
-          </div>
-        }
-      >
-        {providerCards.map((providerCard) => {
-          const customModelInput = customModelInputByProvider[providerCard.provider];
-          const customModelError = customModelErrorByProvider[providerCard.provider] ?? null;
-          const providerDisplayName =
-            providerCard.liveProvider?.displayName?.trim() ||
-            providerCard.title ||
-            formatProviderKindLabel(providerCard.provider);
-
-          return (
-            <div key={providerCard.provider} className="border-t border-border first:border-t-0">
-              <div className="px-4 py-4 sm:px-5">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <div className="flex min-h-5 items-center gap-1.5">
-                      <span
-                        className={cn("size-2 shrink-0 rounded-full", providerCard.statusStyle.dot)}
-                      />
-                      <h3 className="text-sm font-medium text-foreground">{providerDisplayName}</h3>
-                      {providerCard.badgeLabel ? (
-                        <Badge variant="warning" size="sm" className="shrink-0">
-                          {providerCard.badgeLabel}
-                        </Badge>
-                      ) : null}
-                      {providerCard.versionLabel ? (
-                        <code className="text-xs text-muted-foreground">
-                          {providerCard.versionLabel}
-                        </code>
-                      ) : null}
-                      <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-                        {providerCard.isDirty ? (
-                          <SettingResetButton
-                            label={`${providerDisplayName} provider settings`}
-                            onClick={() => {
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  [providerCard.provider]:
-                                    DEFAULT_UNIFIED_SETTINGS.providers[providerCard.provider],
-                                },
-                              });
-                              setCustomModelErrorByProvider((existing) => ({
-                                ...existing,
-                                [providerCard.provider]: null,
-                              }));
-                            }}
-                          />
-                        ) : null}
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {providerCard.summary.headline}
-                      {providerCard.summary.detail ? ` - ${providerCard.summary.detail}` : null}
-                    </p>
-                  </div>
-                  <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-                      onClick={() =>
-                        setOpenProviderDetails((existing) => ({
-                          ...existing,
-                          [providerCard.provider]: !existing[providerCard.provider],
-                        }))
-                      }
-                      aria-label={`Toggle ${providerDisplayName} details`}
-                    >
-                      <ChevronDownIcon
-                        className={cn(
-                          "size-3.5 transition-transform",
-                          openProviderDetails[providerCard.provider] && "rotate-180",
-                        )}
-                      />
-                    </Button>
-                    <Switch
-                      checked={providerCard.providerConfig.enabled}
-                      onCheckedChange={(checked) => {
-                        const isDisabling = !checked;
-                        const shouldClearModelSelection =
-                          isDisabling && textGenProvider === providerCard.provider;
-                        updateSettings({
-                          providers: {
-                            ...settings.providers,
-                            [providerCard.provider]: {
-                              ...settings.providers[providerCard.provider],
-                              enabled: Boolean(checked),
-                            },
-                          },
-                          ...(shouldClearModelSelection
-                            ? {
-                                textGenerationModelSelection:
-                                  DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
-                              }
-                            : {}),
-                        });
-                      }}
-                      aria-label={`Enable ${providerDisplayName}`}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <Collapsible
-                open={openProviderDetails[providerCard.provider]}
-                onOpenChange={(open) =>
-                  setOpenProviderDetails((existing) => ({
-                    ...existing,
-                    [providerCard.provider]: open,
-                  }))
-                }
-              >
-                <CollapsibleContent>
-                  <div className="space-y-0">
-                    <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                      <label
-                        htmlFor={`provider-install-${providerCard.provider}-binary-path`}
-                        className="block"
-                      >
-                        <span className="text-xs font-medium text-foreground">
-                          {providerDisplayName} binary path
-                        </span>
-                        <Input
-                          id={`provider-install-${providerCard.provider}-binary-path`}
-                          className="mt-1.5"
-                          value={providerCard.binaryPathValue}
-                          onChange={(event) =>
-                            updateSettings({
-                              providers: {
-                                ...settings.providers,
-                                [providerCard.provider]: {
-                                  ...settings.providers[providerCard.provider],
-                                  binaryPath: event.target.value,
-                                },
-                              },
-                            })
-                          }
-                          placeholder={providerCard.binaryPlaceholder}
-                          spellCheck={false}
-                        />
-                        <span className="mt-1 block text-xs text-muted-foreground">
-                          {providerCard.binaryDescription}
-                        </span>
-                      </label>
-                    </div>
-
-                    {providerCard.serverUrlPlaceholder ? (
-                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                        <label
-                          htmlFor={`provider-install-${providerCard.provider}-server-url`}
-                          className="block"
-                        >
-                          <span className="text-xs font-medium text-foreground">
-                            {providerDisplayName} server URL
-                          </span>
-                          <Input
-                            id={`provider-install-${providerCard.provider}-server-url`}
-                            className="mt-1.5"
-                            value={providerCard.serverUrlValue}
-                            onChange={(event) =>
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  [providerCard.provider]: {
-                                    ...settings.providers[providerCard.provider],
-                                    ...(providerCard.provider === "opencode"
-                                      ? { serverUrl: event.target.value }
-                                      : {}),
-                                  },
-                                },
-                              })
-                            }
-                            placeholder={providerCard.serverUrlPlaceholder}
-                            spellCheck={false}
-                          />
-                          {providerCard.serverUrlDescription ? (
-                            <span className="mt-1 block text-xs text-muted-foreground">
-                              {providerCard.serverUrlDescription}
-                            </span>
-                          ) : null}
-                        </label>
-                      </div>
-                    ) : null}
-
-                    {providerCard.serverPasswordPlaceholder ? (
-                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                        <label
-                          htmlFor={`provider-install-${providerCard.provider}-server-password`}
-                          className="block"
-                        >
-                          <span className="text-xs font-medium text-foreground">
-                            {providerDisplayName} server password
-                          </span>
-                          <Input
-                            id={`provider-install-${providerCard.provider}-server-password`}
-                            className="mt-1.5"
-                            type="password"
-                            autoComplete="off"
-                            value={providerCard.serverPasswordValue}
-                            onChange={(event) =>
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  [providerCard.provider]: {
-                                    ...settings.providers[providerCard.provider],
-                                    ...(providerCard.provider === "opencode"
-                                      ? { serverPassword: event.target.value }
-                                      : {}),
-                                  },
-                                },
-                              })
-                            }
-                            placeholder={providerCard.serverPasswordPlaceholder}
-                            spellCheck={false}
-                          />
-                          {providerCard.serverPasswordDescription ? (
-                            <span className="mt-1 block text-xs text-muted-foreground">
-                              {providerCard.serverPasswordDescription}
-                            </span>
-                          ) : null}
-                        </label>
-                      </div>
-                    ) : null}
-
-                    {providerCard.homePathKey ? (
-                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                        <label
-                          htmlFor={`provider-install-${providerCard.homePathKey}`}
-                          className="block"
-                        >
-                          <span className="text-xs font-medium text-foreground">
-                            CODEX_HOME path
-                          </span>
-                          <Input
-                            id={`provider-install-${providerCard.homePathKey}`}
-                            className="mt-1.5"
-                            value={codexHomePath}
-                            onChange={(event) =>
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  codex: {
-                                    ...settings.providers.codex,
-                                    homePath: event.target.value,
-                                  },
-                                },
-                              })
-                            }
-                            placeholder={providerCard.homePlaceholder}
-                            spellCheck={false}
-                          />
-                          {providerCard.homeDescription ? (
-                            <span className="mt-1 block text-xs text-muted-foreground">
-                              {providerCard.homeDescription}
-                            </span>
-                          ) : null}
-                        </label>
-                      </div>
-                    ) : null}
-
-                    {providerCard.provider === "claudeAgent" ? (
-                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                        <label htmlFor="provider-install-claudeAgent-launch-args" className="block">
-                          <span className="text-xs font-medium text-foreground">
-                            Launch arguments
-                          </span>
-                          <Input
-                            id="provider-install-claudeAgent-launch-args"
-                            className="mt-1.5"
-                            value={settings.providers.claudeAgent.launchArgs}
-                            onChange={(event) =>
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  claudeAgent: {
-                                    ...settings.providers.claudeAgent,
-                                    launchArgs: event.target.value,
-                                  },
-                                },
-                              })
-                            }
-                            placeholder="e.g. --chrome"
-                            spellCheck={false}
-                          />
-                          <span className="mt-1 block text-xs text-muted-foreground">
-                            Additional CLI arguments passed to Claude Code on session start.
-                          </span>
-                        </label>
-                      </div>
-                    ) : null}
-
-                    <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                      <div className="text-xs font-medium text-foreground">Models</div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {providerCard.models.length} model
-                        {providerCard.models.length === 1 ? "" : "s"} available.
-                      </div>
-                      <div
-                        ref={(el) => {
-                          modelListRefs.current[providerCard.provider] = el;
-                        }}
-                        className="mt-2 max-h-40 overflow-y-auto pb-1"
-                      >
-                        {providerCard.models.map((model) => {
-                          const caps = model.capabilities;
-                          const capLabels: string[] = [];
-                          const descriptors = caps?.optionDescriptors ?? [];
-                          if (descriptors.some((descriptor) => descriptor.id === "fastMode")) {
-                            capLabels.push("Fast mode");
-                          }
-                          if (descriptors.some((descriptor) => descriptor.id === "thinking")) {
-                            capLabels.push("Thinking");
-                          }
-                          if (
-                            descriptors.some(
-                              (descriptor) =>
-                                descriptor.type === "select" &&
-                                (descriptor.id === "reasoningEffort" ||
-                                  descriptor.id === "effort" ||
-                                  descriptor.id === "reasoning" ||
-                                  descriptor.id === "variant"),
-                            )
-                          ) {
-                            capLabels.push("Reasoning");
-                          }
-                          const hasDetails = capLabels.length > 0 || model.name !== model.slug;
-
-                          return (
-                            <div
-                              key={`${providerCard.provider}:${model.slug}`}
-                              className="flex items-center gap-2 py-1"
-                            >
-                              <span className="min-w-0 truncate text-xs text-foreground/90">
-                                {model.name}
-                              </span>
-                              {hasDetails ? (
-                                <Tooltip>
-                                  <TooltipTrigger
-                                    render={
-                                      <button
-                                        type="button"
-                                        className="shrink-0 text-muted-foreground/40 transition-colors hover:text-muted-foreground"
-                                        aria-label={`Details for ${model.name}`}
-                                      />
-                                    }
-                                  >
-                                    <InfoIcon className="size-3" />
-                                  </TooltipTrigger>
-                                  <TooltipPopup side="top" className="max-w-56">
-                                    <div className="space-y-1">
-                                      <code className="block text-[11px] text-foreground">
-                                        {model.slug}
-                                      </code>
-                                      {capLabels.length > 0 ? (
-                                        <div className="flex flex-wrap gap-x-2 gap-y-0.5">
-                                          {capLabels.map((label) => (
-                                            <span
-                                              key={label}
-                                              className="text-[10px] text-muted-foreground"
-                                            >
-                                              {label}
-                                            </span>
-                                          ))}
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  </TooltipPopup>
-                                </Tooltip>
-                              ) : null}
-                              {model.isCustom ? (
-                                <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                                  <span className="text-[10px] text-muted-foreground">custom</span>
-                                  <button
-                                    type="button"
-                                    className="text-muted-foreground transition-colors hover:text-foreground"
-                                    aria-label={`Remove ${model.slug}`}
-                                    onClick={() =>
-                                      removeCustomModel(providerCard.provider, model.slug)
-                                    }
-                                  >
-                                    <XIcon className="size-3" />
-                                  </button>
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                        <Input
-                          id={`custom-model-${providerCard.provider}`}
-                          value={customModelInput}
-                          onChange={(event) => {
-                            const value = event.target.value;
-                            setCustomModelInputByProvider((existing) => ({
-                              ...existing,
-                              [providerCard.provider]: value,
-                            }));
-                            if (customModelError) {
-                              setCustomModelErrorByProvider((existing) => ({
-                                ...existing,
-                                [providerCard.provider]: null,
-                              }));
-                            }
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key !== "Enter") return;
-                            event.preventDefault();
-                            addCustomModel(providerCard.provider);
-                          }}
-                          placeholder={
-                            providerCard.provider === "codex"
-                              ? "gpt-6.7-codex-ultra-preview"
-                              : providerCard.provider === "opencode"
-                                ? "openai/gpt-5"
-                                : "claude-sonnet-5-0"
-                          }
-                          spellCheck={false}
-                        />
-                        <Button
-                          className="shrink-0"
-                          variant="outline"
-                          onClick={() => addCustomModel(providerCard.provider)}
-                        >
-                          <PlusIcon className="size-3.5" />
-                          Add
-                        </Button>
-                      </div>
-
-                      {customModelError ? (
-                        <p className="mt-2 text-xs text-destructive">{customModelError}</p>
-                      ) : null}
-                    </div>
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            </div>
-          );
-        })}
-      </SettingsSection>
-
-      <SettingsSection title="Advanced">
-        <SettingsRow
-          title="Keybindings"
-          description="Open the persisted `keybindings.json` file to edit advanced bindings directly."
-          status={
-            <>
-              <span className="block break-all font-mono text-[11px] text-foreground">
-                {keybindingsConfigPath ?? "Resolving keybindings path..."}
-              </span>
-              {openKeybindingsError ? (
-                <span className="mt-1 block text-destructive">{openKeybindingsError}</span>
-              ) : (
-                <span className="mt-1 block">Opens in your preferred editor.</span>
-              )}
-            </>
-          }
-          control={
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!keybindingsConfigPath || isOpeningKeybindings}
-              onClick={openKeybindingsFile}
-            >
-              {isOpeningKeybindings ? "Opening..." : "Open file"}
-            </Button>
           }
         />
       </SettingsSection>
@@ -1780,67 +950,421 @@ export function GeneralSettingsPanel() {
   );
 }
 
-type ScheduledJobFormState = {
-  projectId: string;
-  title: string;
-  prompt: string;
-  provider: ProviderKind;
-  model: string;
-  modelOptions?: ReadonlyArray<ProviderOptionSelection> | undefined;
-  runtimeMode: "approval-required" | "auto-accept-edits" | "full-access";
-  interactionMode: "default" | "plan";
-  intervalHours: string;
-};
+export function ProviderSettingsPanel() {
+  const settings = useSettings();
+  const { updateSettings } = useUpdateSettings();
+  const serverProviders = useServerProviders();
+  const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
+  const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
+  const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
+    ReadonlySet<ProviderDriverKind>
+  >(() => new Set());
+  const [openInstanceDetails, setOpenInstanceDetails] = useState<Record<string, boolean>>({});
+  const refreshingRef = useRef(false);
 
-const DEFAULT_SCHEDULED_JOB_FORM: ScheduledJobFormState = {
-  projectId: "",
-  title: "",
-  prompt: "",
-  provider: "codex",
-  model: "",
-  modelOptions: undefined,
-  runtimeMode: "full-access",
-  interactionMode: "default",
-  intervalHours: "24",
-};
+  const providerUpdateCandidates = useMemo(
+    () => collectProviderUpdateCandidates(serverProviders),
+    [serverProviders],
+  );
+  const providerUpdateCandidateByInstanceId = useMemo(
+    () => new Map(providerUpdateCandidates.map((candidate) => [candidate.instanceId, candidate])),
+    [providerUpdateCandidates],
+  );
+  const visibleProviderSettings = PROVIDER_SETTINGS.filter(
+    (providerSettings) =>
+      providerSettings.provider !== "cursor" ||
+      serverProviders.some(
+        (provider) =>
+          provider.instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("cursor")),
+      ),
+  );
+  const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
+  const textGenInstanceId = textGenerationModelSelection.instanceId;
+  const lastCheckedAt =
+    serverProviders.length > 0
+      ? serverProviders.reduce(
+          (latest, provider) => (provider.checkedAt > latest ? provider.checkedAt : latest),
+          serverProviders[0]!.checkedAt,
+        )
+      : null;
 
-function toScheduledJobFormState(
-  job: ReturnType<typeof selectScheduledJobsAcrossEnvironments>[number],
-): ScheduledJobFormState {
-  return {
-    projectId: job.projectId,
-    title: job.title,
-    prompt: job.prompt,
-    provider: job.modelSelection.provider,
-    model: job.modelSelection.model,
-    modelOptions: job.modelSelection.options,
-    runtimeMode: job.runtimeMode,
-    interactionMode: job.interactionMode,
-    intervalHours: String(Math.max(1, Math.round(job.schedule.intervalMinutes / 60))),
-  };
-}
+  const refreshProviders = useCallback(() => {
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
+    setIsRefreshingProviders(true);
+    void ensureLocalApi()
+      .server.refreshProviders()
+      .catch((error: unknown) => {
+        console.warn("Failed to refresh providers", error);
+      })
+      .finally(() => {
+        refreshingRef.current = false;
+        setIsRefreshingProviders(false);
+      });
+  }, []);
 
-function providerModelOptionsByProvider(
-  providers: ReadonlyArray<ServerProvider>,
-): Record<ProviderKind, ReadonlyArray<ServerProviderModel>> {
-  return {
-    codex: providers.find((provider) => provider.provider === "codex")?.models ?? [],
-    claudeAgent: providers.find((provider) => provider.provider === "claudeAgent")?.models ?? [],
-    cursor: providers.find((provider) => provider.provider === "cursor")?.models ?? [],
-    opencode: providers.find((provider) => provider.provider === "opencode")?.models ?? [],
-  };
-}
+  const runProviderUpdate = useCallback(async (candidate: ProviderUpdateCandidate) => {
+    let started = false;
+    setUpdatingProviderDrivers((previous) => {
+      if (previous.has(candidate.driver)) {
+        return previous;
+      }
+      started = true;
+      const next = new Set(previous);
+      next.add(candidate.driver);
+      return next;
+    });
+    if (!started) {
+      return;
+    }
 
-function nextScheduledJobModel(
-  provider: ProviderKind,
-  modelsByProvider: Record<ProviderKind, ReadonlyArray<ServerProviderModel>>,
-  currentModel: string,
-): string {
-  const providerModels = modelsByProvider[provider];
-  if (providerModels.some((model) => model.slug === currentModel)) {
-    return currentModel;
+    try {
+      await ensureLocalApi().server.updateProvider({
+        provider: candidate.driver,
+        instanceId: candidate.instanceId,
+      });
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Could not update ${PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver}`,
+          description:
+            error instanceof Error
+              ? error.message
+              : "The provider update command could not be started.",
+        }),
+      );
+    } finally {
+      setUpdatingProviderDrivers((previous) => {
+        if (!previous.has(candidate.driver)) {
+          return previous;
+        }
+        const next = new Set(previous);
+        next.delete(candidate.driver);
+        return next;
+      });
+    }
+  }, []);
+
+  interface InstanceRow {
+    readonly instanceId: ProviderInstanceId;
+    readonly instance: ProviderInstanceConfig;
+    readonly driver: ProviderDriverKind;
+    readonly isDefault: boolean;
+    readonly isDirty?: boolean;
   }
-  return providerModels[0]?.slug ?? "";
+
+  const instancesByDriver = new Map<
+    ProviderDriverKind,
+    Array<[ProviderInstanceId, ProviderInstanceConfig]>
+  >();
+  for (const [rawId, instance] of Object.entries(settings.providerInstances ?? {})) {
+    const driver = instance.driver;
+    const list = instancesByDriver.get(driver) ?? [];
+    list.push([rawId as ProviderInstanceId, instance]);
+    instancesByDriver.set(driver, list);
+  }
+
+  const defaultSlotIdsBySource = new Set<string>(
+    visibleProviderSettings.map((providerSettings) =>
+      String(defaultInstanceIdForDriver(providerSettings.provider)),
+    ),
+  );
+
+  const rows: InstanceRow[] = [];
+  const visibleDriverKinds = new Set<ProviderDriverKind>(
+    visibleProviderSettings.map((providerSettings) => providerSettings.provider),
+  );
+
+  for (const providerSettings of visibleProviderSettings) {
+    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
+    const legacyProviders = settings.providers as Record<string, LegacyProviderSettings>;
+    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
+      string,
+      LegacyProviderSettings
+    >;
+    const driver = providerSettings.provider;
+    const defaultInstanceId = defaultInstanceIdForDriver(driver);
+    const explicitInstance = settings.providerInstances?.[defaultInstanceId];
+    const legacyConfig = legacyProviders[providerSettings.provider]!;
+    const defaultLegacyConfig = defaultLegacyProviders[providerSettings.provider]!;
+    const effectiveInstance: ProviderInstanceConfig =
+      explicitInstance ??
+      ({
+        driver,
+        enabled: legacyConfig.enabled,
+        config: legacyConfig,
+      } satisfies ProviderInstanceConfig);
+    const isDirty =
+      explicitInstance !== undefined || !Equal.equals(legacyConfig, defaultLegacyConfig);
+    rows.push({
+      instanceId: defaultInstanceId,
+      instance: effectiveInstance,
+      driver,
+      isDefault: true,
+      isDirty,
+    });
+    for (const [id, instance] of instancesByDriver.get(providerSettings.provider) ?? []) {
+      if (id === defaultInstanceId) continue;
+      rows.push({ instanceId: id, instance, driver: instance.driver, isDefault: false });
+    }
+  }
+  for (const [driver, list] of instancesByDriver) {
+    if (visibleDriverKinds.has(driver)) continue;
+    for (const [id, instance] of list) {
+      rows.push({
+        instanceId: id,
+        instance,
+        driver: instance.driver,
+        isDefault: defaultSlotIdsBySource.has(String(id)),
+      });
+    }
+  }
+
+  const updateProviderInstance = (
+    row: InstanceRow,
+    next: ProviderInstanceConfig,
+    options?: {
+      readonly textGenerationModelSelection?: Parameters<
+        typeof buildProviderInstanceUpdatePatch
+      >[0]["textGenerationModelSelection"];
+    },
+  ) => {
+    updateSettings(
+      buildProviderInstanceUpdatePatch({
+        settings,
+        instanceId: row.instanceId,
+        instance: next,
+        driver: row.driver,
+        isDefault: row.isDefault,
+        textGenerationModelSelection: options?.textGenerationModelSelection,
+      }),
+    );
+  };
+
+  const deleteProviderInstance = (id: ProviderInstanceId) => {
+    updateSettings({
+      providerInstances: withoutProviderInstanceKey(settings.providerInstances, id),
+      providerModelPreferences: withoutProviderInstanceKey(settings.providerModelPreferences, id),
+      favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], id),
+    });
+  };
+
+  const updateProviderModelPreferences = (
+    instanceId: ProviderInstanceId,
+    next: {
+      readonly hiddenModels: ReadonlyArray<string>;
+      readonly modelOrder: ReadonlyArray<string>;
+    },
+  ) => {
+    const hiddenModels = [...new Set(next.hiddenModels.filter((slug) => slug.trim().length > 0))];
+    const modelOrder = [...new Set(next.modelOrder.filter((slug) => slug.trim().length > 0))];
+    const rest = withoutProviderInstanceKey(settings.providerModelPreferences, instanceId);
+    updateSettings({
+      providerModelPreferences:
+        hiddenModels.length === 0 && modelOrder.length === 0
+          ? rest
+          : {
+              ...rest,
+              [instanceId]: {
+                hiddenModels,
+                modelOrder,
+              },
+            },
+    });
+  };
+
+  const updateProviderFavoriteModels = (
+    instanceId: ProviderInstanceId,
+    nextFavoriteModels: ReadonlyArray<string>,
+  ) => {
+    const favoriteModels = [
+      ...new Set(nextFavoriteModels.map((slug) => slug.trim()).filter((slug) => slug.length > 0)),
+    ];
+    updateSettings({
+      favorites: [
+        ...withoutProviderInstanceFavorites(settings.favorites ?? [], instanceId),
+        ...favoriteModels.map((model) => ({ provider: instanceId, model })),
+      ],
+    });
+  };
+
+  const resetDefaultInstance = (driverKind: ProviderDriverKind) => {
+    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
+    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
+      string,
+      LegacyProviderSettings | undefined
+    >;
+    const defaultInstanceId = defaultInstanceIdForDriver(driverKind);
+    const defaultLegacyProvider = defaultLegacyProviders[driverKind];
+    if (defaultLegacyProvider === undefined) return;
+    updateSettings({
+      providers: {
+        ...settings.providers,
+        [driverKind]: defaultLegacyProvider,
+      } as typeof settings.providers,
+      providerInstances: withoutProviderInstanceKey(settings.providerInstances, defaultInstanceId),
+      providerModelPreferences: withoutProviderInstanceKey(
+        settings.providerModelPreferences,
+        defaultInstanceId,
+      ),
+      favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], defaultInstanceId),
+    });
+  };
+
+  return (
+    <SettingsPageContainer>
+      <SettingsSection
+        title="Providers"
+        headerAction={
+          <div className="flex items-center gap-1.5">
+            <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                    onClick={() => setIsAddInstanceDialogOpen(true)}
+                    aria-label="Add provider instance"
+                  >
+                    <PlusIcon className="size-3" />
+                  </Button>
+                }
+              />
+              <TooltipPopup side="top">Add provider instance</TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                    disabled={isRefreshingProviders}
+                    onClick={() => void refreshProviders()}
+                    aria-label="Refresh provider status"
+                  >
+                    {isRefreshingProviders ? (
+                      <LoaderIcon className="size-3 animate-spin" />
+                    ) : (
+                      <RefreshCwIcon className="size-3" />
+                    )}
+                  </Button>
+                }
+              />
+              <TooltipPopup side="top">Refresh provider status</TooltipPopup>
+            </Tooltip>
+          </div>
+        }
+      >
+        {rows.map((row) => {
+          const driverOption = getDriverOption(row.driver);
+          const liveProvider = serverProviders.find(
+            (candidate) => candidate.instanceId === row.instanceId,
+          );
+          const updateCandidate = liveProvider
+            ? providerUpdateCandidateByInstanceId.get(liveProvider.instanceId)
+            : undefined;
+          const isDriverUpdateRunning =
+            updateCandidate !== undefined &&
+            (updatingProviderDrivers.has(updateCandidate.driver) ||
+              serverProviders.some(
+                (provider) =>
+                  provider.driver === updateCandidate.driver && isProviderUpdateActive(provider),
+              ));
+          const showInlineUpdateButton =
+            updateCandidate !== undefined &&
+            hasOneClickUpdateProviderCandidate(updateCandidate, serverProviders);
+          const canRunInlineUpdate =
+            updateCandidate !== undefined &&
+            canOneClickUpdateProviderCandidate(updateCandidate, serverProviders) &&
+            !updatingProviderDrivers.has(updateCandidate.driver);
+          const modelPreferences = settings.providerModelPreferences?.[row.instanceId] ?? {
+            hiddenModels: [],
+            modelOrder: [],
+          };
+          const favoriteModels = (settings.favorites ?? [])
+            .filter((favorite) => favorite.provider === row.instanceId)
+            .map((favorite) => favorite.model);
+          const resetLabel = driverOption?.label ?? String(row.driver);
+          const headerAction =
+            row.isDefault && row.isDirty ? (
+              <SettingResetButton
+                label={`${resetLabel} provider settings`}
+                onClick={() => resetDefaultInstance(row.driver)}
+              />
+            ) : null;
+          return (
+            <ProviderInstanceCard
+              key={row.instanceId}
+              instanceId={row.instanceId}
+              instance={row.instance}
+              driverOption={driverOption}
+              liveProvider={liveProvider}
+              isExpanded={openInstanceDetails[row.instanceId] ?? false}
+              onExpandedChange={(open) =>
+                setOpenInstanceDetails((existing) => ({
+                  ...existing,
+                  [row.instanceId]: open,
+                }))
+              }
+              onUpdate={(next) => {
+                const wasEnabled = row.instance.enabled ?? true;
+                const isDisabling = next.enabled === false && wasEnabled;
+                const shouldClearTextGen = isDisabling && textGenInstanceId === row.instanceId;
+                if (shouldClearTextGen) {
+                  updateProviderInstance(row, next, {
+                    textGenerationModelSelection:
+                      DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+                  });
+                } else {
+                  updateProviderInstance(row, next);
+                }
+              }}
+              onDelete={row.isDefault ? undefined : () => deleteProviderInstance(row.instanceId)}
+              headerAction={headerAction}
+              hiddenModels={modelPreferences.hiddenModels}
+              favoriteModels={favoriteModels}
+              modelOrder={modelPreferences.modelOrder}
+              onHiddenModelsChange={(hiddenModels) =>
+                updateProviderModelPreferences(row.instanceId, {
+                  ...modelPreferences,
+                  hiddenModels,
+                })
+              }
+              onFavoriteModelsChange={(favoriteModels) =>
+                updateProviderFavoriteModels(row.instanceId, favoriteModels)
+              }
+              onModelOrderChange={(modelOrder) =>
+                updateProviderModelPreferences(row.instanceId, {
+                  ...modelPreferences,
+                  modelOrder,
+                })
+              }
+              onRunUpdate={
+                showInlineUpdateButton && updateCandidate
+                  ? () => {
+                      if (!canRunInlineUpdate) {
+                        return;
+                      }
+                      void runProviderUpdate(updateCandidate);
+                    }
+                  : undefined
+              }
+              isUpdating={showInlineUpdateButton ? isDriverUpdateRunning : undefined}
+            />
+          );
+        })}
+      </SettingsSection>
+
+      <AddProviderInstanceDialog
+        open={isAddInstanceDialogOpen}
+        onOpenChange={setIsAddInstanceDialogOpen}
+      />
+    </SettingsPageContainer>
+  );
 }
 
 function formatScheduledJobInterval(
@@ -1871,232 +1395,6 @@ export function ScheduledJobsPanel() {
   const navigate = useNavigate();
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const jobs = useStore(useShallow(selectScheduledJobsAcrossEnvironments));
-  const providers = useServerProviders();
-  const [formState, setFormState] = useState<ScheduledJobFormState>(() => {
-    const initialProject = projects[0];
-    const modelsByProvider = providerModelOptionsByProvider(providers);
-    const initialModel = nextScheduledJobModel("codex", modelsByProvider, "");
-    return {
-      ...DEFAULT_SCHEDULED_JOB_FORM,
-      projectId: initialProject?.id ?? "",
-      model: initialModel,
-    };
-  });
-  const [editingJobId, setEditingJobId] = useState<ScheduledJobId | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
-  const editingJob = useMemo(
-    () => jobs.find((job) => job.id === editingJobId) ?? null,
-    [editingJobId, jobs],
-  );
-  const modelsByProvider = useMemo(() => providerModelOptionsByProvider(providers), [providers]);
-  const selectedProviderModels = modelsByProvider[formState.provider];
-  const selectedModelForPicker = useMemo(() => {
-    return selectedProviderModels.some((option) => option.slug === formState.model)
-      ? formState.model
-      : (normalizeModelSlug(formState.model, formState.provider) ?? formState.model);
-  }, [formState.model, formState.provider, selectedProviderModels]);
-  const scheduledJobProviderState = useMemo(
-    () =>
-      getComposerProviderState({
-        provider: formState.provider,
-        model: formState.model,
-        models: selectedProviderModels,
-        prompt: formState.prompt,
-        modelOptions: formState.modelOptions,
-      }),
-    [
-      formState.model,
-      formState.modelOptions,
-      formState.prompt,
-      formState.provider,
-      selectedProviderModels,
-    ],
-  );
-  const projectsById = useMemo(
-    () => Object.fromEntries(projects.map((project) => [project.id, project] as const)),
-    [projects],
-  );
-  const selectedProjectTitle = projectsById[formState.projectId]?.name;
-  const providerSupportSummary = useMemo(() => {
-    return providers
-      .filter((provider) => provider.schedulingSupport !== "none")
-      .map(
-        (provider) => `${PROVIDER_DISPLAY_NAMES[provider.provider]}: ${provider.schedulingSupport}`,
-      )
-      .join(" · ");
-  }, [providers]);
-
-  const updateForm = useCallback(
-    (patch: Partial<ScheduledJobFormState>) =>
-      setFormState((current) => {
-        const next = {
-          ...current,
-          ...patch,
-        };
-        if (patch.provider !== undefined) {
-          next.model = nextScheduledJobModel(patch.provider, modelsByProvider, current.model);
-        }
-        if (
-          (patch.provider !== undefined || patch.model !== undefined) &&
-          !("modelOptions" in patch)
-        ) {
-          next.modelOptions = undefined;
-        }
-        return next;
-      }),
-    [modelsByProvider],
-  );
-
-  const resetForm = useCallback(
-    (overrides: Partial<ScheduledJobFormState> = {}) => {
-      const defaultProject = projects[0];
-      const provider = overrides.provider ?? DEFAULT_SCHEDULED_JOB_FORM.provider;
-      const model = nextScheduledJobModel(provider, modelsByProvider, overrides.model ?? "");
-      const modelOptions =
-        overrides.model !== undefined && model === overrides.model
-          ? overrides.modelOptions
-          : undefined;
-      setEditingJobId(null);
-      setFormState({
-        ...DEFAULT_SCHEDULED_JOB_FORM,
-        ...overrides,
-        projectId: overrides.projectId ?? defaultProject?.id ?? "",
-        provider,
-        model,
-        modelOptions,
-      });
-    },
-    [modelsByProvider, projects],
-  );
-
-  useEffect(() => {
-    if (!editingJobId) {
-      return;
-    }
-    if (!editingJob) {
-      resetForm();
-      return;
-    }
-    setFormState(toScheduledJobFormState(editingJob));
-  }, [editingJob, editingJobId, resetForm]);
-
-  const validateForm = useCallback(() => {
-    const selectedProject = projectsById[formState.projectId];
-    if (!selectedProject) {
-      throw new Error("Choose a project for this job.");
-    }
-    if (formState.title.trim().length === 0) {
-      throw new Error("Enter a title for this job.");
-    }
-    if (formState.prompt.trim().length === 0) {
-      throw new Error("Enter the prompt to run.");
-    }
-    const intervalHours = Number.parseInt(formState.intervalHours, 10);
-    if (!Number.isInteger(intervalHours) || intervalHours < 1 || intervalHours > 168) {
-      throw new Error("Interval must be between 1 and 168 hours.");
-    }
-    if (formState.model.trim().length === 0) {
-      throw new Error("Choose a model.");
-    }
-    return {
-      project: selectedProject,
-      intervalHours,
-    };
-  }, [formState, projectsById]);
-
-  const saveJob = useCallback(async () => {
-    const { project, intervalHours } = validateForm();
-    const api = ensureEnvironmentApi(project.environmentId);
-    const modelSelection = createModelSelection(
-      formState.provider,
-      formState.model,
-      scheduledJobProviderState.modelOptionsForDispatch,
-    );
-    setIsSaving(true);
-    try {
-      if (editingJobId) {
-        await api.orchestration.dispatchCommand({
-          type: "scheduled-job.update",
-          commandId: CommandId.make(crypto.randomUUID()),
-          jobId: editingJobId,
-          title: formState.title,
-          prompt: formState.prompt,
-          modelSelection,
-          runtimeMode: formState.runtimeMode,
-          interactionMode: formState.interactionMode,
-          schedule: {
-            type: "interval",
-            intervalMinutes: intervalHours * 60,
-          },
-          createdAt: new Date().toISOString(),
-        });
-      } else {
-        await api.orchestration.dispatchCommand(
-          buildScheduledJobCreateCommand({
-            projectId: project.id,
-            title: formState.title,
-            prompt: formState.prompt,
-            modelSelection,
-            runtimeMode: formState.runtimeMode,
-            interactionMode: formState.interactionMode,
-            intervalHours,
-          }),
-        );
-      }
-      resetForm({
-        projectId: project.id,
-        provider: formState.provider,
-        model: formState.model,
-        modelOptions: scheduledJobProviderState.modelOptionsForDispatch,
-        runtimeMode: formState.runtimeMode,
-        interactionMode: formState.interactionMode,
-        intervalHours: String(intervalHours),
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  }, [editingJobId, formState, resetForm, scheduledJobProviderState, validateForm]);
-
-  const handleJobAction = useCallback(
-    async (
-      job: ReturnType<typeof selectScheduledJobsAcrossEnvironments>[number],
-      action: "pause" | "resume" | "run" | "delete",
-    ) => {
-      const project = projectsById[job.projectId];
-      if (!project) {
-        return;
-      }
-      const api = ensureEnvironmentApi(project.environmentId);
-      const createdAt = new Date().toISOString();
-      switch (action) {
-        case "pause":
-          await api.orchestration.dispatchCommand(
-            buildScheduledJobPauseCommand({ jobId: job.id, createdAt }),
-          );
-          return;
-        case "resume":
-          await api.orchestration.dispatchCommand(
-            buildScheduledJobResumeCommand({ jobId: job.id, createdAt }),
-          );
-          return;
-        case "delete":
-          await api.orchestration.dispatchCommand(
-            buildScheduledJobDeleteCommand({ jobId: job.id, createdAt }),
-          );
-          if (editingJobId === job.id) {
-            resetForm();
-          }
-          return;
-        case "run":
-          await api.orchestration.dispatchCommand(
-            buildScheduledJobRunNowCommand({ jobId: job.id, createdAt }),
-          );
-          return;
-      }
-    },
-    [editingJobId, projectsById, resetForm],
-  );
-
   const groupedJobs = useMemo(() => {
     return projects
       .map((project) => ({
@@ -2113,144 +1411,6 @@ export function ScheduledJobsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection
-        title={editingJobId ? "Edit job" : "New job"}
-        icon={<CalendarClockIcon className="size-3.5" />}
-      >
-        <SettingsRow
-          title={editingJobId ? "Scheduled job" : "Create scheduled job"}
-          description="Project-level recurring jobs create a fresh thread on each run and dispatch a normal agent turn through orchestration."
-          status={
-            providerSupportSummary
-              ? providerSupportSummary
-              : "Provider-native scheduling metadata is informational only in this version."
-          }
-        >
-          <div className="mt-4 grid gap-3 pb-4 sm:grid-cols-2">
-            <Select
-              value={formState.projectId}
-              onValueChange={(value) => {
-                if (value) {
-                  updateForm({ projectId: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Choose project">
-                  {selectedProjectTitle ?? "Choose project"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup>
-                {projects.map((project) => (
-                  <SelectItem key={project.id} value={project.id}>
-                    {project.name}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-            <Input
-              value={formState.title}
-              placeholder="Daily review"
-              onChange={(event) => updateForm({ title: event.target.value })}
-            />
-            <ProviderModelPicker
-              provider={formState.provider}
-              model={selectedModelForPicker}
-              lockedProvider={null}
-              providers={providers}
-              modelOptionsByProvider={modelsByProvider}
-              triggerVariant="outline"
-              triggerClassName="w-full max-w-none"
-              onProviderModelChange={(provider, model) => updateForm({ provider, model })}
-            />
-            <TraitsPicker
-              provider={formState.provider}
-              models={selectedProviderModels}
-              model={formState.model}
-              prompt={formState.prompt}
-              modelOptions={formState.modelOptions}
-              triggerVariant="outline"
-              triggerClassName="w-full justify-start"
-              onPromptChange={(prompt) => updateForm({ prompt })}
-              onModelOptionsChange={(modelOptions) => updateForm({ modelOptions })}
-            />
-            <Select
-              value={formState.runtimeMode}
-              onValueChange={(value) =>
-                updateForm({ runtimeMode: value as ScheduledJobFormState["runtimeMode"] })
-              }
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectPopup>
-                <SelectItem value="full-access">Full access</SelectItem>
-                <SelectItem value="auto-accept-edits">Auto-accept edits</SelectItem>
-                <SelectItem value="approval-required">Approval required</SelectItem>
-              </SelectPopup>
-            </Select>
-            <Select
-              value={formState.interactionMode}
-              onValueChange={(value) =>
-                updateForm({ interactionMode: value as ScheduledJobFormState["interactionMode"] })
-              }
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectPopup>
-                <SelectItem value="default">Default</SelectItem>
-                <SelectItem value="plan">Plan</SelectItem>
-              </SelectPopup>
-            </Select>
-            <Input
-              type="number"
-              min={1}
-              max={168}
-              value={formState.intervalHours}
-              placeholder="24"
-              onChange={(event) => updateForm({ intervalHours: event.target.value })}
-            />
-            <div className="sm:col-span-2">
-              <Textarea
-                value={formState.prompt}
-                rows={6}
-                placeholder="Review the project and summarize any build breaks, CI issues, or obvious regressions."
-                onChange={(event) => updateForm({ prompt: event.target.value })}
-              />
-            </div>
-            <div className="flex items-center gap-2 sm:col-span-2">
-              <Button
-                size="sm"
-                className="gap-1.5"
-                disabled={isSaving || projects.length === 0}
-                onClick={() =>
-                  void saveJob().catch((error) => {
-                    toastManager.add({
-                      type: "error",
-                      title: editingJobId ? "Failed to update job" : "Failed to create job",
-                      description: error instanceof Error ? error.message : "An error occurred.",
-                    });
-                  })
-                }
-              >
-                {isSaving ? (
-                  <LoaderIcon className="size-3.5 animate-spin" />
-                ) : (
-                  <PlusIcon className="size-3.5" />
-                )}
-                {editingJobId ? "Save changes" : "Create job"}
-              </Button>
-              {editingJobId ? (
-                <Button size="sm" variant="outline" onClick={() => resetForm()}>
-                  Cancel
-                </Button>
-              ) : null}
-            </div>
-          </div>
-        </SettingsRow>
-      </SettingsSection>
-
       {groupedJobs.length === 0 ? (
         <SettingsSection title="Scheduled jobs">
           <Empty className="min-h-88">
@@ -2260,7 +1420,7 @@ export function ScheduledJobsPanel() {
             <EmptyHeader>
               <EmptyTitle>No scheduled jobs</EmptyTitle>
               <EmptyDescription>
-                Create a recurring project job to run agent turns on a schedule.
+                Create recurring jobs from project manifests or orchestration commands.
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
@@ -2280,6 +1440,7 @@ export function ScheduledJobsPanel() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
+                      <CalendarClockIcon className="size-3.5 text-muted-foreground" />
                       <h3 className="truncate text-sm font-medium text-foreground">{job.title}</h3>
                       <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
                         {scheduledJobStatusLabel(job.status)}
@@ -2287,7 +1448,7 @@ export function ScheduledJobsPanel() {
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {formatScheduledJobInterval(job)} {" · "}
-                      {PROVIDER_DISPLAY_NAMES[job.modelSelection.provider]} {" · "}
+                      {job.modelSelection.instanceId} {" · "}
                       {job.modelSelection.model}
                     </p>
                     <p className="mt-2 line-clamp-3 text-xs leading-relaxed text-muted-foreground/85">
@@ -2305,127 +1466,23 @@ export function ScheduledJobsPanel() {
                       <p className="mt-2 text-[11px] text-destructive">{job.lastError}</p>
                     ) : null}
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
+                  {job.runs[0] ? (
                     <Button
                       size="sm"
                       variant="outline"
-                      className="gap-1.5"
                       onClick={() =>
-                        void handleJobAction(job, "run").catch((error) => {
-                          toastManager.add({
-                            type: "error",
-                            title: "Failed to run job",
-                            description:
-                              error instanceof Error ? error.message : "An error occurred.",
-                          });
+                        void navigate({
+                          to: "/$environmentId/$threadId",
+                          params: {
+                            environmentId: job.environmentId,
+                            threadId: job.runs[0]!.threadId,
+                          },
                         })
                       }
                     >
-                      <PlayIcon className="size-3.5" />
-                      Run now
+                      Open latest thread
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5"
-                      onClick={() => {
-                        setEditingJobId(job.id);
-                        setFormState(toScheduledJobFormState(job));
-                      }}
-                    >
-                      <PencilIcon className="size-3.5" />
-                      Edit
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5"
-                      onClick={() =>
-                        void handleJobAction(
-                          job,
-                          job.status === "active" ? "pause" : "resume",
-                        ).catch((error) => {
-                          toastManager.add({
-                            type: "error",
-                            title:
-                              job.status === "active"
-                                ? "Failed to pause job"
-                                : "Failed to resume job",
-                            description:
-                              error instanceof Error ? error.message : "An error occurred.",
-                          });
-                        })
-                      }
-                    >
-                      {job.status === "active" ? (
-                        <PauseIcon className="size-3.5" />
-                      ) : (
-                        <PlayIcon className="size-3.5" />
-                      )}
-                      {job.status === "active" ? "Pause" : "Resume"}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5 text-destructive hover:text-destructive"
-                      onClick={() =>
-                        void handleJobAction(job, "delete").catch((error) => {
-                          toastManager.add({
-                            type: "error",
-                            title: "Failed to delete job",
-                            description:
-                              error instanceof Error ? error.message : "An error occurred.",
-                          });
-                        })
-                      }
-                    >
-                      <Trash2Icon className="size-3.5" />
-                      Delete
-                    </Button>
-                  </div>
-                </div>
-                <div className="mt-4 rounded-xl border border-border/70 bg-background/40 p-3">
-                  <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
-                    <CheckCircle2Icon className="size-3.5" />
-                    Recent runs
-                  </div>
-                  {job.runs.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">No runs recorded yet.</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {job.runs.slice(0, 5).map((run) => (
-                        <div
-                          key={run.id}
-                          className="flex flex-wrap items-center justify-between gap-2 text-xs"
-                        >
-                          <div className="min-w-0 text-muted-foreground">
-                            <span className="font-medium text-foreground">
-                              {scheduledJobOutcomeLabel(run.outcome)}
-                            </span>
-                            {" · "}
-                            {formatRelativeTimeLabel(run.startedAt)}
-                            {" · "}
-                            {run.trigger === "manual" ? "Manual" : "Scheduled"}
-                            {run.error ? ` · ${run.error}` : ""}
-                          </div>
-                          <Button
-                            size="xs"
-                            variant="outline"
-                            onClick={() =>
-                              void navigate({
-                                to: "/$environmentId/$threadId",
-                                params: buildThreadRouteParams(
-                                  scopeThreadRef(job.environmentId, run.threadId),
-                                ),
-                              })
-                            }
-                          >
-                            Open thread
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  ) : null}
                 </div>
               </div>
             ))}

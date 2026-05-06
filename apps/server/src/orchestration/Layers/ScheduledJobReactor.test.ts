@@ -1,4 +1,9 @@
-import { ProjectId, ScheduledJobId, type ScheduledJob } from "@t3tools/contracts";
+import {
+  ProjectId,
+  ProviderInstanceId,
+  ScheduledJobId,
+  type ScheduledJob,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -18,7 +23,7 @@ function makeJob(overrides: Partial<ScheduledJob> = {}): ScheduledJob {
     title: "Social loop",
     prompt: "Run social engagement.",
     modelSelection: {
-      provider: "codex",
+      instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5.4",
     },
     runtimeMode: "full-access",
@@ -128,7 +133,7 @@ describe("resolveManifestWritableJobLocalId", () => {
             title: "Social loop",
             prompt: "Run social engagement.",
             modelSelection: {
-              provider: "codex",
+              instanceId: ProviderInstanceId.make("codex"),
               model: "gpt-5.4",
             },
             runtimeMode: "full-access",
@@ -162,7 +167,7 @@ describe("resolveManifestWritableJobLocalId", () => {
             title: "Social loop",
             prompt: "Run social engagement.",
             modelSelection: {
-              provider: "codex",
+              instanceId: ProviderInstanceId.make("codex"),
               model: "gpt-5.4",
             },
             runtimeMode: "full-access",
@@ -187,7 +192,7 @@ describe("resolveManifestWritableJobLocalId", () => {
             title: "Social loop",
             prompt: "Run social engagement.",
             modelSelection: {
-              provider: "codex",
+              instanceId: ProviderInstanceId.make("codex"),
               model: "gpt-5.4",
             },
             runtimeMode: "full-access",

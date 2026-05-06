@@ -1,4 +1,5 @@
 import type {
+  ProviderDriverKind,
   ModelCapabilities,
   ServerProvider,
   ServerProviderAuth,
@@ -12,6 +13,8 @@ import { Effect, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
+import { createProviderVersionAdvisory } from "./providerMaintenance.ts";
+import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 
 export const DEFAULT_TIMEOUT_MS = 4_000;
 // Auth status checks involve disk/network lookups and can be slow on first run (especially Windows)
@@ -36,6 +39,8 @@ export interface ServerProviderPresentation {
   readonly badgeLabel?: string;
   readonly showInteractionModeToggle?: boolean;
 }
+
+export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver">;
 
 export function nonEmptyTrimmed(value: string | undefined): string | undefined {
   if (!value) return undefined;
@@ -111,7 +116,7 @@ export function parseGenericCliVersion(output: string): string | null {
 
 export function providerModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel>,
-  provider: ServerProvider["provider"],
+  provider: ProviderDriverKind,
   customModels: ReadonlyArray<string>,
   customModelCapabilities: ModelCapabilities,
 ): ReadonlyArray<ServerProviderModel> {
@@ -180,7 +185,7 @@ export function buildBooleanOptionDescriptor(input: {
 }
 
 export function buildServerProvider(input: {
-  provider: ServerProvider["provider"];
+  driver?: ProviderDriverKind;
   presentation: ServerProviderPresentation;
   enabled: boolean;
   checkedAt: string;
@@ -189,10 +194,16 @@ export function buildServerProvider(input: {
   slashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
   skills?: ReadonlyArray<ServerProviderSkill>;
   probe: ProviderProbeResult;
-}): ServerProvider {
+}): ServerProviderDraft {
   const schedulingSupport = input.schedulingSupport ?? "external-info";
+  const versionAdvisory = input.driver
+    ? createProviderVersionAdvisory({
+        driver: input.driver,
+        currentVersion: input.probe.version,
+        checkedAt: input.checkedAt,
+      })
+    : undefined;
   return {
-    provider: input.provider,
     displayName: input.presentation.displayName,
     ...(input.presentation.badgeLabel ? { badgeLabel: input.presentation.badgeLabel } : {}),
     ...(typeof input.presentation.showInteractionModeToggle === "boolean"
@@ -209,16 +220,11 @@ export function buildServerProvider(input: {
     schedulingSupport,
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],
+    ...(versionAdvisory ? { versionAdvisory } : {}),
   };
 }
 
 export const collectStreamAsString = <E>(
   stream: Stream.Stream<Uint8Array, E>,
 ): Effect.Effect<string, E> =>
-  stream.pipe(
-    Stream.decodeText(),
-    Stream.runFold(
-      () => "",
-      (acc, chunk) => acc + chunk,
-    ),
-  );
+  collectUint8StreamText({ stream }).pipe(Effect.map((collected) => collected.text));

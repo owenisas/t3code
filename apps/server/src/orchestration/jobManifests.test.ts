@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ProjectId } from "@t3tools/contracts";
+import { ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 
 import {
   applyScheduledJobManifestPatch,
@@ -38,7 +38,7 @@ describe("parseScheduledJobManifest", () => {
         intervalMinutes: 360,
         prompt: "Check the repo for failing builds.",
         modelSelection: {
-          provider: "claudeAgent",
+          instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-sonnet-4-6",
         },
         runtimeMode: "approval-required",
@@ -66,12 +66,12 @@ describe("parseScheduledJobManifest", () => {
           },
         ],
       }),
-      { provider: "codex", model: "gpt-5.4" },
+      { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     );
 
     expect(result.jobs).toHaveLength(1);
     expect(result.jobs[0]?.modelSelection).toEqual({
-      provider: "codex",
+      instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5.4",
     });
     expect(result.errors).toEqual([
@@ -119,7 +119,7 @@ describe("applyScheduledJobManifestPatch", () => {
         title: "Updated repo health",
         prompt: "Check CI and lint.",
         modelSelection: {
-          provider: "claudeAgent",
+          instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-sonnet-4-6",
         },
         runtimeMode: "full-access",
@@ -141,7 +141,7 @@ describe("applyScheduledJobManifestPatch", () => {
           title: "Updated repo health",
           intervalMinutes: 180,
           prompt: "Check CI and lint.",
-          provider: "claudeAgent",
+          instanceId: "claudeAgent",
           model: "claude-sonnet-4-6",
           runtimeMode: "full-access",
           interactionMode: "plan",

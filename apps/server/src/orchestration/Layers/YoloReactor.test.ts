@@ -4,6 +4,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  ProviderInstanceId,
   ThreadId,
   TurnId,
   type OrchestrationCommand,
@@ -63,7 +64,7 @@ function makeThread(input: {
     projectId,
     title: `Thread ${input.threadId}`,
     modelSelection: {
-      provider: "codex",
+      instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5-codex",
     },
     runtimeMode: "full-access",

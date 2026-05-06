@@ -14,6 +14,9 @@ import { Route as PairRouteImport } from './routes/pair'
 import { Route as JobsRouteImport } from './routes/jobs'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
+import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
+import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
+import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
 import { Route as SettingsJobsRouteImport } from './routes/settings.jobs'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
@@ -44,6 +47,21 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => ChatRoute,
+} as any)
+const SettingsSourceControlRoute = SettingsSourceControlRouteImport.update({
+  id: '/source-control',
+  path: '/source-control',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
+  id: '/providers',
+  path: '/providers',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsKeybindingsRoute = SettingsKeybindingsRouteImport.update({
+  id: '/keybindings',
+  path: '/keybindings',
+  getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsJobsRoute = SettingsJobsRouteImport.update({
   id: '/jobs',
@@ -86,6 +104,9 @@ export interface FileRoutesByFullPath {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/jobs': typeof SettingsJobsRoute
+  '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/source-control': typeof SettingsSourceControlRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
@@ -97,6 +118,9 @@ export interface FileRoutesByTo {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/jobs': typeof SettingsJobsRoute
+  '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/source-control': typeof SettingsSourceControlRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -111,6 +135,9 @@ export interface FileRoutesById {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/jobs': typeof SettingsJobsRoute
+  '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/source-control': typeof SettingsSourceControlRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -126,6 +153,9 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/general'
     | '/settings/jobs'
+    | '/settings/keybindings'
+    | '/settings/providers'
+    | '/settings/source-control'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
   fileRoutesByTo: FileRoutesByTo
@@ -137,6 +167,9 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/general'
     | '/settings/jobs'
+    | '/settings/keybindings'
+    | '/settings/providers'
+    | '/settings/source-control'
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
@@ -150,6 +183,9 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/general'
     | '/settings/jobs'
+    | '/settings/keybindings'
+    | '/settings/providers'
+    | '/settings/source-control'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
@@ -198,6 +234,27 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof ChatIndexRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/settings/source-control': {
+      id: '/settings/source-control'
+      path: '/source-control'
+      fullPath: '/settings/source-control'
+      preLoaderRoute: typeof SettingsSourceControlRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/providers': {
+      id: '/settings/providers'
+      path: '/providers'
+      fullPath: '/settings/providers'
+      preLoaderRoute: typeof SettingsProvidersRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/keybindings': {
+      id: '/settings/keybindings'
+      path: '/keybindings'
+      fullPath: '/settings/keybindings'
+      preLoaderRoute: typeof SettingsKeybindingsRouteImport
+      parentRoute: typeof SettingsRoute
     }
     '/settings/jobs': {
       id: '/settings/jobs'
@@ -263,6 +320,9 @@ interface SettingsRouteChildren {
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsJobsRoute: typeof SettingsJobsRoute
+  SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
+  SettingsProvidersRoute: typeof SettingsProvidersRoute
+  SettingsSourceControlRoute: typeof SettingsSourceControlRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
@@ -270,6 +330,9 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsJobsRoute: SettingsJobsRoute,
+  SettingsKeybindingsRoute: SettingsKeybindingsRoute,
+  SettingsProvidersRoute: SettingsProvidersRoute,
+  SettingsSourceControlRoute: SettingsSourceControlRoute,
 }
 
 const SettingsRouteWithChildren = SettingsRoute._addFileChildren(

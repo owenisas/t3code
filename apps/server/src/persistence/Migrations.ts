@@ -38,16 +38,19 @@ import Migration0022 from "./Migrations/022_AuthSessionLastConnectedAt.ts";
 import Migration0023 from "./Migrations/023_ProjectionThreadShellSummary.ts";
 import Migration0024 from "./Migrations/024_BackfillProjectionThreadShellSummary.ts";
 import Migration0025 from "./Migrations/025_CleanupInvalidProjectionPendingApprovals.ts";
-import Migration0026 from "./Migrations/025_ProjectionThreadQueuedFollowUps.ts";
-import Migration0027 from "./Migrations/026_ProjectionScheduledJobs.ts";
-import Migration0028 from "./Migrations/027_ProjectionThreadForkOrigin.ts";
-import Migration0029 from "./Migrations/028_RepairProjectionThreadShellSummary.ts";
-import Migration0030 from "./Migrations/029_RepairProjectionPendingApprovals.ts";
-import Migration0031 from "./Migrations/031_ProjectionThreadYolo.ts";
-import Migration0032 from "./Migrations/026_CanonicalizeModelSelectionOptions.ts";
-import Migration0033 from "./Migrations/033_ProjectionThreadQueuedFollowUpInteractionMode.ts";
-import Migration0034 from "./Migrations/034_ProjectionThreadsStarredAt.ts";
-import Migration0035 from "./Migrations/035_RepairCursorAssistantSegmentMessageIds.ts";
+import Migration0026 from "./Migrations/026_CanonicalizeModelSelectionOptions.ts";
+import Migration0027 from "./Migrations/027_ProviderSessionRuntimeInstanceId.ts";
+import Migration0028 from "./Migrations/028_ProjectionThreadSessionInstanceId.ts";
+import Migration0029 from "./Migrations/029_ProjectionThreadDetailOrderingIndexes.ts";
+import Migration0030 from "./Migrations/025_ProjectionThreadQueuedFollowUps.ts";
+import Migration0031 from "./Migrations/026_ProjectionScheduledJobs.ts";
+import Migration0032 from "./Migrations/027_ProjectionThreadForkOrigin.ts";
+import Migration0033 from "./Migrations/028_RepairProjectionThreadShellSummary.ts";
+import Migration0034 from "./Migrations/029_RepairProjectionPendingApprovals.ts";
+import Migration0035 from "./Migrations/031_ProjectionThreadYolo.ts";
+import Migration0036 from "./Migrations/033_ProjectionThreadQueuedFollowUpInteractionMode.ts";
+import Migration0037 from "./Migrations/034_ProjectionThreadsStarredAt.ts";
+import Migration0038 from "./Migrations/035_RepairCursorAssistantSegmentMessageIds.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -85,16 +88,19 @@ export const migrationEntries = [
   [23, "ProjectionThreadShellSummary", Migration0023],
   [24, "BackfillProjectionThreadShellSummary", Migration0024],
   [25, "CleanupInvalidProjectionPendingApprovals", Migration0025],
-  [26, "ProjectionThreadQueuedFollowUps", Migration0026],
-  [27, "ProjectionScheduledJobs", Migration0027],
-  [28, "ProjectionThreadForkOrigin", Migration0028],
-  [29, "RepairProjectionThreadShellSummary", Migration0029],
-  [30, "RepairProjectionPendingApprovals", Migration0030],
-  [31, "ProjectionThreadYolo", Migration0031],
-  [32, "CanonicalizeModelSelectionOptions", Migration0032],
-  [33, "ProjectionThreadQueuedFollowUpInteractionMode", Migration0033],
-  [34, "ProjectionThreadsStarredAt", Migration0034],
-  [35, "RepairCursorAssistantSegmentMessageIds", Migration0035],
+  [26, "CanonicalizeModelSelectionOptions", Migration0026],
+  [27, "ProviderSessionRuntimeInstanceId", Migration0027],
+  [28, "ProjectionThreadSessionInstanceId", Migration0028],
+  [29, "ProjectionThreadDetailOrderingIndexes", Migration0029],
+  [30, "ProjectionThreadQueuedFollowUps", Migration0030],
+  [31, "ProjectionScheduledJobs", Migration0031],
+  [32, "ProjectionThreadForkOrigin", Migration0032],
+  [33, "RepairProjectionThreadShellSummary", Migration0033],
+  [34, "RepairProjectionPendingApprovals", Migration0034],
+  [35, "ProjectionThreadYolo", Migration0035],
+  [36, "ProjectionThreadQueuedFollowUpInteractionMode", Migration0036],
+  [37, "ProjectionThreadsStarredAt", Migration0037],
+  [38, "RepairCursorAssistantSegmentMessageIds", Migration0038],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

@@ -1,4 +1,4 @@
-import { MessageId } from "@t3tools/contracts";
+import { MessageId, ProviderInstanceId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
@@ -34,7 +34,7 @@ describe("ComposerQueuedFollowUps", () => {
               },
             ],
             modelSelection: {
-              provider: "claudeAgent",
+              instanceId: ProviderInstanceId.make("claudeAgent"),
               model: "sonnet",
             },
             queuedAt: "2026-04-12T23:01:00.000Z",
@@ -51,6 +51,6 @@ describe("ComposerQueuedFollowUps", () => {
     expect(markup).toContain("Delete");
     expect(markup).toContain('src="http://localhost/attachments/attachment-1"');
     expect(markup).toContain('alt="bug.png"');
-    expect(markup).toContain("Claude sonnet");
+    expect(markup).toContain("claudeAgent sonnet");
   });
 });

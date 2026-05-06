@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ProjectId, ScheduledJobId } from "@t3tools/contracts";
+import { ProjectId, ProviderInstanceId, ScheduledJobId } from "@t3tools/contracts";
 
 import {
   buildScheduledJobCreateCommand,
@@ -62,7 +62,7 @@ describe("buildScheduledJobCreateCommand", () => {
       projectId: ProjectId.make("project-1"),
       title: "Nightly review",
       prompt: "Review the project for regressions",
-      modelSelection: { provider: "codex", model: "gpt-5-codex" },
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
       runtimeMode: "full-access",
       interactionMode: "default",
       intervalHours: 12,
@@ -74,7 +74,7 @@ describe("buildScheduledJobCreateCommand", () => {
       projectId: ProjectId.make("project-1"),
       title: "Nightly review",
       prompt: "Review the project for regressions",
-      modelSelection: { provider: "codex", model: "gpt-5-codex" },
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
       runtimeMode: "full-access",
       interactionMode: "default",
       schedule: {
@@ -92,7 +92,7 @@ describe("buildScheduledJobCreateCommand", () => {
       projectId: ProjectId.make("project-1"),
       title: "Cursor review",
       prompt: "Review the project with Cursor",
-      modelSelection: { provider: "cursor", model: "gpt-5.4" },
+      modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "gpt-5.4" },
       runtimeMode: "full-access",
       interactionMode: "default",
       intervalHours: 6,
@@ -100,7 +100,7 @@ describe("buildScheduledJobCreateCommand", () => {
     });
 
     expect(command.modelSelection).toEqual({
-      provider: "cursor",
+      instanceId: ProviderInstanceId.make("cursor"),
       model: "gpt-5.4",
     });
   });

@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect";
 
-import { TextGeneration } from "../../git/Services/TextGeneration.ts";
+import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { YoloEvaluator, type YoloEvaluatorShape } from "../Services/YoloEvaluator.ts";
 
 const makeYoloEvaluator = Effect.gen(function* () {

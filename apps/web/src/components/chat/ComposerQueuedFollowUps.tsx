@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import { CheckIcon, PencilIcon, Trash2Icon, XIcon } from "lucide-react";
 import type { Thread } from "../../types";
 import { Button } from "../ui/button";
@@ -31,7 +30,7 @@ function summarizeQueuedFollowUp(followUp: Thread["queuedFollowUps"][number]): {
         : `${attachmentCount} attachments`;
 
   const modelLabel = followUp.modelSelection
-    ? `${PROVIDER_DISPLAY_NAMES[followUp.modelSelection.provider]} ${followUp.modelSelection.model}`
+    ? `${followUp.modelSelection.instanceId} ${followUp.modelSelection.model}`
     : null;
   const modeLabel =
     followUp.interactionMode === "plan"

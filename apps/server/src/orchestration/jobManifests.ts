@@ -1,12 +1,15 @@
 import {
+  DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   type ModelSelection,
   ProjectId,
   type ProviderInteractionMode,
-  type ProviderKind,
+  ProviderDriverKind,
+  ProviderInstanceId,
   ScheduledJobId,
   type ScheduledJobSchedule,
   type RuntimeMode,
+  isProviderDriverKind,
 } from "@t3tools/contracts";
 
 export const T3_JOB_MANIFEST_RELATIVE_PATH = ".t3/jobs.json";
@@ -53,9 +56,6 @@ export interface ScheduledJobManifestPatchResult {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-
-const isProviderKind = (value: unknown): value is ProviderKind =>
-  value === "codex" || value === "claudeAgent";
 
 const isRuntimeMode = (value: unknown): value is RuntimeMode =>
   value === "approval-required" || value === "auto-accept-edits" || value === "full-access";
@@ -190,19 +190,29 @@ export function parseScheduledJobManifest(
       return;
     }
 
-    const defaultProvider = defaultModelSelection?.provider ?? "codex";
-    const provider = isProviderKind(rawJob.provider) ? rawJob.provider : defaultProvider;
+    const rawInstanceId =
+      readNonEmptyString(rawJob.instanceId) ?? readNonEmptyString(rawJob.providerInstanceId);
+    const rawProvider = isProviderDriverKind(rawJob.provider) ? rawJob.provider : null;
+    const instanceId = rawInstanceId
+      ? ProviderInstanceId.make(rawInstanceId)
+      : rawProvider
+        ? ProviderInstanceId.make(rawProvider)
+        : (defaultModelSelection?.instanceId ?? ProviderInstanceId.make("codex"));
+    const defaultProvider = isProviderDriverKind(String(instanceId))
+      ? ProviderDriverKind.make(String(instanceId))
+      : rawProvider;
     const model =
       readNonEmptyString(rawJob.model) ??
-      (defaultModelSelection?.provider === provider ? defaultModelSelection.model : null) ??
-      DEFAULT_MODEL_BY_PROVIDER[provider];
+      (defaultModelSelection?.instanceId === instanceId ? defaultModelSelection.model : null) ??
+      (defaultProvider ? DEFAULT_MODEL_BY_PROVIDER[defaultProvider] : undefined) ??
+      DEFAULT_MODEL;
 
     jobs.push({
       localId,
       title,
       prompt,
       modelSelection: {
-        provider,
+        instanceId,
         model,
       },
       runtimeMode: isRuntimeMode(rawJob.runtimeMode) ? rawJob.runtimeMode : "full-access",
@@ -280,8 +290,10 @@ export function applyScheduledJobManifestPatch(
         nextJob.prompt = patch.prompt;
       }
       if (patch.modelSelection !== undefined) {
-        nextJob.provider = patch.modelSelection.provider;
+        nextJob.instanceId = patch.modelSelection.instanceId;
         nextJob.model = patch.modelSelection.model;
+        delete nextJob.provider;
+        delete nextJob.providerInstanceId;
       }
       if (patch.runtimeMode !== undefined) {
         nextJob.runtimeMode = patch.runtimeMode;

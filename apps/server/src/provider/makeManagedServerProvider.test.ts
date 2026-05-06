@@ -1,5 +1,5 @@
 import { describe, it, assert } from "@effect/vitest";
-import type { ServerProvider } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { Deferred, Effect, Fiber, PubSub, Ref, Stream } from "effect";
 
@@ -20,8 +20,23 @@ interface TestSettings {
   readonly enabled: boolean;
 }
 
+const maintenanceCapabilities = {
+  provider: ProviderDriverKind.make("codex"),
+  packageName: "@openai/codex",
+  update: {
+    command: "npm install -g @openai/codex@latest",
+
+    executable: "npm",
+
+    args: ["install", "-g", "@openai/codex@latest"],
+
+    lockKey: "npm-global",
+  },
+} as const;
+
 const initialSnapshot: ServerProvider = {
-  provider: "codex",
+  instanceId: ProviderInstanceId.make("codex"),
+  driver: ProviderDriverKind.make("codex"),
   enabled: true,
   installed: true,
   version: null,
@@ -36,7 +51,8 @@ const initialSnapshot: ServerProvider = {
 };
 
 const refreshedSnapshot: ServerProvider = {
-  provider: "codex",
+  instanceId: ProviderInstanceId.make("codex"),
+  driver: ProviderDriverKind.make("codex"),
   enabled: true,
   installed: true,
   version: "1.0.0",
@@ -90,6 +106,7 @@ describe("makeManagedServerProvider", () => {
           const checkCalls = yield* Ref.make(0);
           const releaseCheck = yield* Deferred.make<void>();
           const provider = yield* makeManagedServerProvider<TestSettings>({
+            maintenanceCapabilities,
             getSettings: Effect.succeed({ enabled: true }),
             streamSettings: Stream.empty,
             haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
@@ -131,6 +148,7 @@ describe("makeManagedServerProvider", () => {
         const releaseInitialCheck = yield* Deferred.make<void>();
         const releaseSettingsCheck = yield* Deferred.make<void>();
         const provider = yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
           getSettings: Ref.get(settingsRef),
           streamSettings: Stream.fromPubSub(settingsChanges),
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
@@ -172,6 +190,7 @@ describe("makeManagedServerProvider", () => {
         const releaseEnrichment = yield* Deferred.make<void>();
         const releaseCheck = yield* Deferred.make<void>();
         const provider = yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
           getSettings: Effect.succeed({ enabled: true }),
           streamSettings: Stream.empty,
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
@@ -212,6 +231,7 @@ describe("makeManagedServerProvider", () => {
         const secondCallbackReady = yield* Deferred.make<void>();
         const allowFirstRefresh = yield* Deferred.make<void>();
         const provider = yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
           getSettings: Effect.succeed({ enabled: true }),
           streamSettings: Stream.empty,
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,

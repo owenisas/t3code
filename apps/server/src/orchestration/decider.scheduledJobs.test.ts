@@ -2,6 +2,7 @@ import {
   CommandId,
   MessageId,
   ProjectId,
+  ProviderInstanceId,
   ScheduledJobId,
   ScheduledJobRunId,
   ThreadId,
@@ -41,7 +42,7 @@ function makeJob(overrides: Partial<ScheduledJob> = {}): ScheduledJob {
     projectId,
     title: "Daily review",
     prompt: "Review the project.",
-    modelSelection: { provider: "codex", model: "gpt-5.4" },
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     runtimeMode: "full-access",
     interactionMode: "default",
     status: "active",
@@ -73,7 +74,7 @@ function makeReadModel(job: ScheduledJob = makeJob()): OrchestrationReadModel {
         title: "Project",
         workspaceRoot: "/tmp/project",
         repositoryIdentity: null,
-        defaultModelSelection: { provider: "codex", model: "gpt-5.4" },
+        defaultModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         scripts: [],
         createdAt: now,
         updatedAt: now,
@@ -102,7 +103,7 @@ describe("decideOrchestrationCommand scheduled jobs", () => {
             title: "Cursor review",
             prompt: "Review with Cursor.",
             modelSelection: {
-              provider: "cursor",
+              instanceId: ProviderInstanceId.make("cursor"),
               model: "gpt-5.4",
             },
             runtimeMode: "full-access",
@@ -122,7 +123,7 @@ describe("decideOrchestrationCommand scheduled jobs", () => {
     }
     const payload = event.payload as { readonly job: ScheduledJob };
     expect(payload.job.modelSelection).toEqual({
-      provider: "cursor",
+      instanceId: ProviderInstanceId.make("cursor"),
       model: "gpt-5.4",
     });
   });
@@ -172,7 +173,7 @@ describe("decideOrchestrationCommand scheduled jobs", () => {
             commandId: CommandId.make("cmd-job-update-cursor"),
             jobId,
             modelSelection: {
-              provider: "cursor",
+              instanceId: ProviderInstanceId.make("cursor"),
               model: "claude-opus-4-7",
             },
             createdAt: "2026-04-16T13:00:00.000Z",
@@ -186,7 +187,7 @@ describe("decideOrchestrationCommand scheduled jobs", () => {
     }
     const payload = event.payload as { readonly modelSelection?: ScheduledJob["modelSelection"] };
     expect(payload.modelSelection).toEqual({
-      provider: "cursor",
+      instanceId: ProviderInstanceId.make("cursor"),
       model: "claude-opus-4-7",
     });
   });
@@ -285,7 +286,7 @@ describe("decideOrchestrationCommand scheduled jobs", () => {
       threadId: ThreadId.make("thread-job-run-1"),
       projectId,
       title: "Daily review · 2026-04-16 13:00",
-      modelSelection: { provider: "codex", model: "gpt-5.4" },
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
       runtimeMode: "full-access",
       interactionMode: "default",
     });

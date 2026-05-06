@@ -19,7 +19,7 @@ import type {
   ScopedProjectRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { ProviderKind } from "@t3tools/contracts";
+import { isProviderDriverKind, ProviderDriverKind } from "@t3tools/contracts";
 import type { ThreadId, TurnId } from "@t3tools/contracts";
 import { Schema } from "effect";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
@@ -138,12 +138,16 @@ function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function normalizeModelSelection<T extends { provider: ProviderKind; model: string }>(
-  selection: T,
-): T {
+// Accepts the open `instanceId` string carried on `ModelSelection`; malformed
+// values pass through unchanged, while valid slugs use any registered alias
+// table for model normalization.
+function normalizeModelSelection<T extends { instanceId: string; model: string }>(selection: T): T {
+  if (!isProviderDriverKind(selection.instanceId)) {
+    return selection;
+  }
   return {
     ...selection,
-    model: resolveModelSlugForProvider(selection.provider, selection.model),
+    model: resolveModelSlugForProvider(selection.instanceId, selection.model),
   };
 }
 
@@ -154,6 +158,7 @@ function mapProjectScripts(scripts: ReadonlyArray<Project["scripts"][number]>): 
 function mapSession(session: OrchestrationSession): ThreadSession {
   return {
     provider: toLegacyProvider(session.providerName),
+    providerInstanceId: session.providerInstanceId ?? undefined,
     status: toLegacySessionStatus(session.status),
     orchestrationStatus: session.status,
     activeTurnId: session.activeTurnId ?? undefined,
@@ -1129,11 +1134,11 @@ function toLegacySessionStatus(
   }
 }
 
-function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (Schema.is(ProviderKind)(providerName)) {
+function toLegacyProvider(providerName: string | null): ProviderDriverKind {
+  if (Schema.is(ProviderDriverKind)(providerName)) {
     return providerName;
   }
-  return "codex";
+  return ProviderDriverKind.make("codex");
 }
 
 function attachmentPreviewRoutePath(attachmentId: string): string {
@@ -2316,6 +2321,20 @@ export function setActiveEnvironmentId(state: AppState, environmentId: Environme
   };
 }
 
+export function removeEnvironmentState(state: AppState, environmentId: EnvironmentId): AppState {
+  if (!state.environmentStateById[environmentId] && state.activeEnvironmentId !== environmentId) {
+    return state;
+  }
+
+  const { [environmentId]: _removed, ...environmentStateById } = state.environmentStateById;
+  return {
+    ...state,
+    activeEnvironmentId:
+      state.activeEnvironmentId === environmentId ? null : state.activeEnvironmentId,
+    environmentStateById,
+  };
+}
+
 export function setThreadBranch(
   state: AppState,
   threadRef: ScopedThreadRef,
@@ -2341,6 +2360,7 @@ export function setThreadBranch(
 
 interface AppStore extends AppState {
   setActiveEnvironmentId: (environmentId: EnvironmentId) => void;
+  removeEnvironmentState: (environmentId: EnvironmentId) => void;
   syncServerShellSnapshot: (
     snapshot: OrchestrationShellSnapshot,
     environmentId: EnvironmentId,
@@ -2364,6 +2384,8 @@ export const useStore = create<AppStore>((set) => ({
   ...initialState,
   setActiveEnvironmentId: (environmentId) =>
     set((state) => setActiveEnvironmentId(state, environmentId)),
+  removeEnvironmentState: (environmentId) =>
+    set((state) => removeEnvironmentState(state, environmentId)),
   syncServerShellSnapshot: (snapshot, environmentId) =>
     set((state) => syncServerShellSnapshot(state, snapshot, environmentId)),
   syncServerThreadDetail: (thread, environmentId) =>

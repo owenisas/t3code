@@ -437,7 +437,7 @@ const makeScheduledJobReactor = Effect.gen(function* () {
         const needsUpdate =
           existingJob.title !== manifestJob.title ||
           existingJob.prompt !== manifestJob.prompt ||
-          existingJob.modelSelection.provider !== manifestJob.modelSelection.provider ||
+          existingJob.modelSelection.instanceId !== manifestJob.modelSelection.instanceId ||
           existingJob.modelSelection.model !== manifestJob.modelSelection.model ||
           existingJob.runtimeMode !== manifestJob.runtimeMode ||
           existingJob.interactionMode !== manifestJob.interactionMode ||

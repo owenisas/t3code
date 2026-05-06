@@ -2,6 +2,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  ProviderInstanceId,
   type OrchestrationEvent,
   type ScheduledJob,
   ScheduledJobId,
@@ -32,7 +33,7 @@ function makeScheduledJob(overrides: Partial<ScheduledJob> = {}): ScheduledJob {
     title: "Old job",
     prompt: "Old prompt",
     modelSelection: {
-      provider: "claudeAgent",
+      instanceId: ProviderInstanceId.make("claudeAgent"),
       model: "claude-sonnet-4-6",
     },
     runtimeMode: "full-access",
@@ -89,7 +90,7 @@ describe("isThreadDetailEvent", () => {
         title: "Project",
         workspaceRoot: "/tmp/project",
         defaultModelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5.4",
         },
         scripts: [],
@@ -114,7 +115,7 @@ describe("applyScheduledJobShellEventOverlay", () => {
         jobId: staleJob.id,
         prompt: "New prompt with ERROR RESILIENCE",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5.4",
         },
         schedule: {
@@ -130,7 +131,7 @@ describe("applyScheduledJobShellEventOverlay", () => {
 
     expect(overlaid.prompt).toBe("New prompt with ERROR RESILIENCE");
     expect(overlaid.modelSelection).toEqual({
-      provider: "codex",
+      instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5.4",
     });
     expect(overlaid.schedule.intervalMinutes).toBe(240);
