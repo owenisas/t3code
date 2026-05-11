@@ -7,7 +7,10 @@
  *
  * @module ClaudeTextGeneration
  */
-import { Effect, Option, Schema, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { type ClaudeSettings, type ModelSelection } from "@t3tools/contracts";
@@ -183,6 +186,9 @@ function normalizeYoloReviewStructuredOutput(
   });
 }
 
+const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
+const decodeClaudeOutputEnvelope = Schema.decodeEffect(Schema.fromJsonString(ClaudeOutputEnvelope));
+
 export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
   claudeSettings: ClaudeSettings,
   environment: NodeJS.ProcessEnv = process.env,
@@ -202,6 +208,26 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ),
       Effect.mapError((cause) =>
         normalizeCliError("claude", operation, cause, "Failed to collect process output"),
+      ),
+    );
+
+  const encodeJsonForOperation = (
+    operation:
+      | "generateCommitMessage"
+      | "generatePrContent"
+      | "generateBranchName"
+      | "generateThreadTitle",
+    value: unknown,
+    detail: string,
+  ): Effect.Effect<string, TextGenerationError> =>
+    encodeJsonString(value).pipe(
+      Effect.mapError(
+        (cause) =>
+          new TextGenerationError({
+            operation,
+            detail,
+            cause,
+          }),
       ),
     );
 
@@ -227,7 +253,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     outputSchemaJson: S;
     modelSelection: ModelSelection;
   }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
-    const jsonSchemaStr = JSON.stringify(toJsonSchemaObject(outputSchemaJson));
+    const jsonSchemaStr = yield* encodeJsonForOperation(
+      operation,
+      toJsonSchemaObject(outputSchemaJson),
+      "Failed to encode structured output schema.",
+    );
     const caps = getClaudeModelCapabilities(modelSelection.model);
     const descriptors = getProviderOptionDescriptors({
       caps,
@@ -247,6 +277,14 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),
     };
+    const settingsJson =
+      Object.keys(settings).length > 0
+        ? yield* encodeJsonForOperation(
+            operation,
+            settings,
+            "Failed to encode Claude CLI settings.",
+          )
+        : undefined;
 
     const safeReviewArgs =
       operation === "generateYoloReview"
@@ -264,7 +302,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "--model",
           resolveClaudeApiModelId(modelSelection),
           ...(cliEffort ? ["--effort", cliEffort] : []),
-          ...(Object.keys(settings).length > 0 ? ["--settings", JSON.stringify(settings)] : []),
+          ...(settingsJson ? ["--settings", settingsJson] : []),
           ...safeReviewArgs,
           ...(operation === "generateYoloReview" ? [] : ["--dangerously-skip-permissions"]),
         ],
@@ -329,9 +367,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ),
     );
 
-    const envelope = yield* Schema.decodeEffect(Schema.fromJsonString(ClaudeOutputEnvelope))(
-      rawStdout,
-    ).pipe(
+    const envelope = yield* decodeClaudeOutputEnvelope(rawStdout).pipe(
       Effect.catchTag("SchemaError", (cause) =>
         Effect.fail(
           new TextGenerationError({
