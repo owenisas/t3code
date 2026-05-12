@@ -52,6 +52,122 @@ const exists = (filePath: string) =>
 
 const BaseTestLayer = makeProjectionPipelinePrefixedTestLayer("t3-projection-pipeline-test-");
 
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-active-turn-")))(
+  "OrchestrationProjectionPipeline",
+  (it) => {
+    it.effect("keeps assistant segment completion from closing an active provider turn", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-active-provider-turn");
+        const turnId = TurnId.make("turn-active-provider");
+        const startedAt = "2026-01-01T00:00:00.000Z";
+        const segmentCompletedAt = "2026-01-01T00:00:01.000Z";
+        const turnCompletedAt = "2026-01-01T00:00:02.000Z";
+        const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+          eventStore
+            .append(event)
+            .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+        yield* appendAndProject({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-active-provider-turn-1"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: startedAt,
+          commandId: CommandId.make("cmd-active-provider-turn-1"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-active-provider-turn-1"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "opencode",
+              providerInstanceId: ProviderInstanceId.make("opencode"),
+              runtimeMode: "full-access",
+              activeTurnId: turnId,
+              lastError: null,
+              updatedAt: startedAt,
+            },
+          },
+        });
+
+        yield* appendAndProject({
+          type: "thread.message-sent",
+          eventId: EventId.make("evt-active-provider-turn-2"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: segmentCompletedAt,
+          commandId: CommandId.make("cmd-active-provider-turn-2"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-active-provider-turn-2"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: MessageId.make("assistant-active-provider"),
+            role: "assistant",
+            text: "partial response",
+            turnId,
+            streaming: false,
+            createdAt: segmentCompletedAt,
+            updatedAt: segmentCompletedAt,
+          },
+        });
+
+        let turnRows = yield* sql<{ readonly state: string; readonly completedAt: string | null }>`
+          SELECT
+            state,
+            completed_at AS "completedAt"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+            AND turn_id = ${turnId}
+        `;
+        assert.equal(turnRows[0]?.state, "running");
+        assert.equal(turnRows[0]?.completedAt, null);
+
+        yield* appendAndProject({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-active-provider-turn-3"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: turnCompletedAt,
+          commandId: CommandId.make("cmd-active-provider-turn-3"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-active-provider-turn-3"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "ready",
+              providerName: "opencode",
+              providerInstanceId: ProviderInstanceId.make("opencode"),
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: turnCompletedAt,
+            },
+          },
+        });
+
+        turnRows = yield* sql<{ readonly state: string; readonly completedAt: string | null }>`
+          SELECT
+            state,
+            completed_at AS "completedAt"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+            AND turn_id = ${turnId}
+        `;
+        assert.equal(turnRows[0]?.state, "completed");
+        assert.equal(turnRows[0]?.completedAt, turnCompletedAt);
+      }),
+    );
+  },
+);
+
 it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
   it.effect("bootstraps all projection states and writes projection rows", () =>
     Effect.gen(function* () {

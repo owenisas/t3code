@@ -81,6 +81,7 @@ interface OpenCodeSessionContext {
   readonly openCodeSessionId: string;
   readonly pendingPermissions: Map<string, PermissionRequest>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
+  readonly childCallIdBySessionId: Map<string, string>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
   readonly partById: Map<string, Part>;
   readonly emittedTextByPartId: Map<string, string>;
@@ -398,6 +399,14 @@ function toolStateCreatedAt(part: Extract<Part, { type: "tool" }>): string | und
   }
 }
 
+function childSessionIdFromToolPart(part: Extract<Part, { type: "tool" }>): string | undefined {
+  if (part.state.status !== "running" && part.state.status !== "completed") {
+    return undefined;
+  }
+  const sessionId = part.state.metadata?.sessionId;
+  return typeof sessionId === "string" && sessionId.length > 0 ? sessionId : undefined;
+}
+
 function sessionErrorMessage(error: unknown): string {
   if (!error || typeof error !== "object") {
     return "OpenCode session failed.";
@@ -672,7 +681,12 @@ export function makeOpenCodeAdapter(
     ) {
       const payloadSessionId =
         "properties" in event ? (event.properties as { sessionID?: unknown }).sessionID : undefined;
-      if (payloadSessionId !== context.openCodeSessionId) {
+      const childCallId =
+        typeof payloadSessionId === "string"
+          ? context.childCallIdBySessionId.get(payloadSessionId)
+          : undefined;
+      const isParentSession = payloadSessionId === context.openCodeSessionId;
+      if (!isParentSession && childCallId === undefined) {
         return;
       }
 
@@ -682,12 +696,51 @@ export function makeOpenCodeAdapter(
         event: {
           provider: PROVIDER,
           threadId: context.session.threadId,
-          providerThreadId: context.openCodeSessionId,
+          providerThreadId:
+            typeof payloadSessionId === "string" ? payloadSessionId : context.openCodeSessionId,
           type: event.type,
           ...(turnId ? { turnId } : {}),
+          ...(isParentSession ? {} : { parentProviderThreadId: context.openCodeSessionId }),
           payload: event,
         },
       });
+
+      if (!isParentSession) {
+        if (event.type === "session.status" && event.properties.status.type === "retry") {
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: context.session.threadId,
+              turnId,
+              itemId: childCallId,
+              raw: event,
+            })),
+            type: "runtime.warning",
+            payload: {
+              message: `OpenCode subtask is retrying: ${event.properties.status.message}`,
+              detail: {
+                sessionID: payloadSessionId,
+                status: event.properties.status,
+              },
+            },
+          });
+        }
+        if (event.type === "session.error") {
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: context.session.threadId,
+              turnId,
+              itemId: childCallId,
+              raw: event,
+            })),
+            type: "runtime.warning",
+            payload: {
+              message: `OpenCode subtask failed: ${sessionErrorMessage(event.properties.error)}`,
+              detail: event.properties.error,
+            },
+          });
+        }
+        return;
+      }
 
       switch (event.type) {
         case "message.updated": {
@@ -763,6 +816,10 @@ export function makeOpenCodeAdapter(
           }
 
           if (part.type === "tool") {
+            const childSessionId = childSessionIdFromToolPart(part);
+            if (childSessionId !== undefined) {
+              context.childCallIdBySessionId.set(childSessionId, part.callID);
+            }
             const itemType = toToolLifecycleItemType(part.tool);
             const title =
               part.state.status === "running" ? (part.state.title ?? part.tool) : part.tool;
@@ -1140,6 +1197,7 @@ export function makeOpenCodeAdapter(
           openCodeSessionId: started.openCodeSession.id,
           pendingPermissions: new Map(),
           pendingQuestions: new Map(),
+          childCallIdBySessionId: new Map(),
           partById: new Map(),
           emittedTextByPartId: new Map(),
           messageRoleById: new Map(),

@@ -490,6 +490,77 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("surfaces retry status from OpenCode child task sessions", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.keepEventStreamOpen = true;
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-child-session-retry");
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(5),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Investigate",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+      runtimeMock.pushSubscribedEvent({
+        type: "message.part.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          part: {
+            id: "part-child-task",
+            sessionID: "http://127.0.0.1:9999/session",
+            messageID: "msg-parent",
+            type: "tool",
+            tool: "task",
+            callID: "call-child-task",
+            state: {
+              status: "running",
+              title: "Find data",
+              input: {},
+              metadata: { sessionId: "child-session" },
+              time: { start: 1 },
+            },
+          },
+          time: 1,
+        },
+      });
+      runtimeMock.pushSubscribedEvent({
+        type: "session.status",
+        properties: {
+          sessionID: "child-session",
+          status: {
+            type: "retry",
+            attempt: 3,
+            message: "Too Many Requests",
+            next: 2,
+          },
+        },
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      runtimeMock.closeSubscribedEventStream();
+      const warning = events.find((event) => event.type === "runtime.warning");
+      assert.equal(warning?.turnId, turn.turnId);
+      assert.equal(warning?.itemId, "call-child-task");
+      if (warning?.type === "runtime.warning") {
+        assert.equal(warning.payload.message, "OpenCode subtask is retrying: Too Many Requests");
+      }
+    }),
+  );
+
   it.effect("passes agent and variant options for the adapter's bound custom instance id", () => {
     const instanceId = ProviderInstanceId.make("opencode_zen");
     const adapterLayer = Layer.effect(
