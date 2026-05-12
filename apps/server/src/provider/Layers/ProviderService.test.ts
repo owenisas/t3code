@@ -877,6 +877,30 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("does not recover an inactive session when interrupting a turn", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      const session = yield* provider.startSession(asThreadId("thread-interrupt-inactive"), {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-interrupt-inactive"),
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      const startCallsAfterInitialSession = routing.codex.startSession.mock.calls.length;
+      routing.codex.interruptTurn.mockClear();
+
+      yield* routing.codex.adapter.stopSession(session.threadId);
+      const failure = yield* Effect.flip(provider.interruptTurn({ threadId: session.threadId }));
+
+      assert.equal(routing.codex.startSession.mock.calls.length, startCallsAfterInitialSession);
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, "no active provider session");
+      assert.deepEqual(routing.codex.interruptTurn.mock.calls, []);
+    }),
+  );
+
   it.effect("recovers stale persisted sessions for rollback by resuming thread identity", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
@@ -1169,6 +1193,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
       const initial = yield* provider.startSession(asThreadId("thread-claude-stale-send-turn"), {
         provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: claudeAgentInstanceId,
         threadId: asThreadId("thread-claude-stale-send-turn"),
         cwd: "/tmp/project-claude-stale-send-turn",
         runtimeMode: "full-access",
@@ -1242,6 +1267,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
       const initial = yield* provider.startSession(asThreadId("thread-claude-stale-live-send"), {
         provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: claudeAgentInstanceId,
         threadId: asThreadId("thread-claude-stale-live-send"),
         cwd: "/tmp/project-claude-stale-live-send",
         modelSelection: {
@@ -1288,7 +1314,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         assert.equal(startPayload.provider, "claudeAgent");
         assert.equal(startPayload.cwd, "/tmp/project-claude-stale-live-send");
         assert.deepEqual(startPayload.modelSelection, {
-          provider: "claudeAgent",
+          instanceId: claudeAgentInstanceId,
           model: "claude-opus-4-6",
           options: [{ id: "effort", value: "max" }],
         });
@@ -1504,6 +1530,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         const provider = yield* ProviderService;
         return yield* provider.startSession(asThreadId("thread-claude-stale-start"), {
           provider: CLAUDE_AGENT_DRIVER,
+          providerInstanceId: claudeAgentInstanceId,
           threadId: asThreadId("thread-claude-stale-start"),
           cwd: "/tmp/project-claude-stale-start",
           runtimeMode: "full-access",
@@ -1567,6 +1594,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         const provider = yield* ProviderService;
         yield* provider.startSession(initial.threadId, {
           provider: CLAUDE_AGENT_DRIVER,
+          providerInstanceId: claudeAgentInstanceId,
           threadId: initial.threadId,
           cwd: "/tmp/project-claude-stale-start",
           runtimeMode: "full-access",

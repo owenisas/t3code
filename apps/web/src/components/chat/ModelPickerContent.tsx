@@ -37,6 +37,7 @@ type ModelPickerItem = {
 };
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
+const ALL_SUBPROVIDERS = "__all__";
 
 // Split a `${instanceId}:${slug}` combobox key back into its pieces. Slugs
 // can contain colons (e.g. some vendor model ids), so we only split on the
@@ -104,6 +105,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       return favorites.length > 0 ? "favorites" : props.activeInstanceId;
     },
   );
+  const [selectedOpenCodeSubProvider, setSelectedOpenCodeSubProvider] = useState(ALL_SUBPROVIDERS);
   const keybindings = useMemo<ResolvedKeybindingsConfig>(
     () => providedKeybindings ?? [],
     [providedKeybindings],
@@ -228,6 +230,34 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     [instanceEntries],
   );
 
+  const openCodeSubProviders = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const model of flatModels) {
+      if (model.driverKind !== "opencode" || !model.subProvider) {
+        continue;
+      }
+      counts.set(model.subProvider, (counts.get(model.subProvider) ?? 0) + 1);
+    }
+    return [...counts.entries()].toSorted((left, right) => left[0].localeCompare(right[0]));
+  }, [flatModels]);
+
+  const selectedInstanceEntry =
+    selectedInstanceId === "favorites" ? null : (entryByInstanceId.get(selectedInstanceId) ?? null);
+  const showOpenCodeSubProviderFilter =
+    !searchQuery.trim() &&
+    openCodeSubProviders.length > 1 &&
+    (props.lockedProvider === "opencode" ||
+      (props.lockedProvider === null && selectedInstanceEntry?.driverKind === "opencode"));
+
+  useEffect(() => {
+    if (
+      selectedOpenCodeSubProvider !== ALL_SUBPROVIDERS &&
+      !openCodeSubProviders.some(([subProvider]) => subProvider === selectedOpenCodeSubProvider)
+    ) {
+      setSelectedOpenCodeSubProvider(ALL_SUBPROVIDERS);
+    }
+  }, [openCodeSubProviders, selectedOpenCodeSubProvider]);
+
   // Filter models based on search query and selected instance
   const filteredModels = useMemo(() => {
     let result = flatModels;
@@ -312,6 +342,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       result = result.filter((m) => m.instanceId === selectedInstanceId);
     }
 
+    if (
+      selectedOpenCodeSubProvider !== ALL_SUBPROVIDERS &&
+      (props.lockedProvider === "opencode" ||
+        (props.lockedProvider === null && selectedInstanceEntry?.driverKind === "opencode"))
+    ) {
+      result = result.filter((m) => m.subProvider === selectedOpenCodeSubProvider);
+    }
+
     return sortProviderModelItems(result, {
       favoriteModelKeys: favoritesSet,
       groupFavorites: selectedInstanceId !== "favorites",
@@ -326,6 +364,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     searchQuery,
     showLockedInstanceSidebar,
     selectedInstanceId,
+    selectedInstanceEntry?.driverKind,
+    selectedOpenCodeSubProvider,
   ]);
 
   const handleModelSelect = useCallback(
@@ -604,6 +644,36 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 onTouchStart={(e) => e.stopPropagation()}
                 size="sm"
               />
+              {showOpenCodeSubProviderFilter ? (
+                <div className="mt-2 flex gap-1 overflow-x-auto pb-0.5">
+                  <button
+                    type="button"
+                    className={cn(
+                      "shrink-0 rounded-full border px-2 py-1 text-[11px] leading-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+                      selectedOpenCodeSubProvider === ALL_SUBPROVIDERS &&
+                        "border-primary/40 bg-primary/10 text-foreground",
+                    )}
+                    onClick={() => setSelectedOpenCodeSubProvider(ALL_SUBPROVIDERS)}
+                  >
+                    All
+                  </button>
+                  {openCodeSubProviders.map(([subProvider, count]) => (
+                    <button
+                      key={subProvider}
+                      type="button"
+                      className={cn(
+                        "shrink-0 rounded-full border px-2 py-1 text-[11px] leading-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+                        selectedOpenCodeSubProvider === subProvider &&
+                          "border-primary/40 bg-primary/10 text-foreground",
+                      )}
+                      onClick={() => setSelectedOpenCodeSubProvider(subProvider)}
+                    >
+                      {subProvider}
+                      <span className="ml-1 text-muted-foreground/70">{count}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             {/* Model list */}

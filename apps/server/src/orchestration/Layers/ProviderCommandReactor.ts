@@ -1,3 +1,4 @@
+// @effect-diagnostics importFromBarrel:off globalDate:off globalDateInEffect:off globalTimers:off globalErrorInEffectFailure:off
 import {
   type ChatAttachment,
   CommandId,
@@ -29,7 +30,7 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
-import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
+import { ProviderAdapterRequestError, ProviderValidationError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
@@ -43,6 +44,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
+const isProviderValidationError = Schema.is(ProviderValidationError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
 type ProviderIntentEvent = Extract<
@@ -334,6 +336,12 @@ const make = Effect.gen(function* () {
       : undefined;
     if (providerError) {
       return providerError.detail;
+    }
+    const validationError = isProviderValidationError(failReason?.error)
+      ? failReason.error
+      : undefined;
+    if (validationError) {
+      return validationError.issue;
     }
     return Cause.pretty(cause);
   };
@@ -851,16 +859,31 @@ const make = Effect.gen(function* () {
     }
 
     const shouldHydrateForkContext =
-      thread.forkOrigin != null && thread.forkOrigin.hydratedAt === null;
-    const forkTranscript = shouldHydrateForkContext
-      ? (() => {
-          const messageIndex = thread.messages.findIndex((entry) => entry.id === message.id);
-          if (messageIndex <= 0) {
-            return null;
-          }
-          return buildForkContextTranscript(thread.messages.slice(0, messageIndex));
-        })()
-      : null;
+      thread.forkOrigin != null && thread.forkOrigin.hydratedAt == null;
+    let forkTranscript: string | null = null;
+    if (shouldHydrateForkContext) {
+      const sourceThread = yield* resolveThread(thread.forkOrigin.sourceThreadId);
+      const sourceMessageIndex =
+        sourceThread?.messages.findIndex(
+          (entry) => entry.id === thread.forkOrigin?.sourceMessageId,
+        ) ?? -1;
+      const sourceMessage =
+        sourceThread && sourceMessageIndex >= 0 ? sourceThread.messages[sourceMessageIndex] : null;
+      const sourceCopyEndIndex =
+        sourceMessage?.role === "assistant" ? sourceMessageIndex + 1 : sourceMessageIndex;
+      if (sourceThread && sourceCopyEndIndex > 0) {
+        forkTranscript = buildForkContextTranscript(
+          sourceThread.messages.slice(0, sourceCopyEndIndex),
+        );
+      }
+
+      if (forkTranscript === null) {
+        const messageIndex = thread.messages.findIndex((entry) => entry.id === message.id);
+        if (messageIndex > 0) {
+          forkTranscript = buildForkContextTranscript(thread.messages.slice(0, messageIndex));
+        }
+      }
+    }
     const providerInput =
       forkTranscript === null
         ? message.text
@@ -975,20 +998,50 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
+    const markInterruptFailed = (detail: string) =>
+      Effect.gen(function* () {
+        yield* appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.turn.interrupt.failed",
+          summary: "Provider turn interrupt failed",
+          detail,
+          turnId: event.payload.turnId ?? thread.latestTurn?.turnId ?? null,
+          createdAt: event.payload.createdAt,
+        });
+        const latestThread = yield* resolveThread(event.payload.threadId);
+        const session = latestThread?.session;
+        if (!session || session.status === "stopped") {
+          return;
+        }
+        yield* setThreadSession({
+          threadId: event.payload.threadId,
+          session: {
+            ...session,
+            status: "ready",
+            activeTurnId: null,
+            lastError: detail,
+            updatedAt: event.payload.createdAt,
+          },
+          createdAt: event.payload.createdAt,
+        });
+      });
     const hasSession = thread.session && thread.session.status !== "stopped";
     if (!hasSession) {
-      return yield* appendProviderFailureActivity({
-        threadId: event.payload.threadId,
-        kind: "provider.turn.interrupt.failed",
-        summary: "Provider turn interrupt failed",
-        detail: "No active provider session is bound to this thread.",
-        turnId: event.payload.turnId ?? null,
-        createdAt: event.payload.createdAt,
-      });
+      return yield* markInterruptFailed("No active provider session is bound to this thread.");
+    }
+
+    const activeSessions = yield* providerService.listSessions();
+    const activeSession = activeSessions.find(
+      (session) => session.threadId === event.payload.threadId && session.status !== "closed",
+    );
+    if (!activeSession) {
+      return yield* markInterruptFailed("No active provider session is bound to this thread.");
     }
 
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+    yield* providerService
+      .interruptTurn({ threadId: event.payload.threadId })
+      .pipe(Effect.catchCause((cause) => markInterruptFailed(formatFailureDetail(cause))));
   });
 
   const processTurnSteerRequested = Effect.fn("processTurnSteerRequested")(function* (

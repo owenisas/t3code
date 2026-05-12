@@ -58,6 +58,18 @@ function makeFakeClaudeBinary(dir: string) {
         'if [ -n "$T3_FAKE_CLAUDE_STDERR" ]; then',
         '  printf "%s\\n" "$T3_FAKE_CLAUDE_STDERR" >&2',
         "fi",
+        'if printf "%s" "$args" | grep -F -- "--json-schema" >/dev/null; then',
+        '  if [ -n "$T3_FAKE_CLAUDE_SCHEMA_OUTPUT" ]; then',
+        '    printf "%s" "$T3_FAKE_CLAUDE_SCHEMA_OUTPUT"',
+        "  else",
+        '    printf "%s" "$T3_FAKE_CLAUDE_OUTPUT"',
+        "  fi",
+        '  exit "${T3_FAKE_CLAUDE_SCHEMA_EXIT_CODE:-${T3_FAKE_CLAUDE_EXIT_CODE:-0}}"',
+        "fi",
+        'if [ -n "$T3_FAKE_CLAUDE_PLAIN_OUTPUT" ]; then',
+        '  printf "%s" "$T3_FAKE_CLAUDE_PLAIN_OUTPUT"',
+        '  exit "${T3_FAKE_CLAUDE_PLAIN_EXIT_CODE:-0}"',
+        "fi",
         'printf "%s" "$T3_FAKE_CLAUDE_OUTPUT"',
         'exit "${T3_FAKE_CLAUDE_EXIT_CODE:-0}"',
         "",
@@ -71,7 +83,11 @@ function makeFakeClaudeBinary(dir: string) {
 function withFakeClaudeEnv<A, E, R>(
   input: {
     output: string;
+    schemaOutput?: string;
     exitCode?: number;
+    schemaExitCode?: number;
+    plainOutput?: string;
+    plainExitCode?: number;
     stderr?: string;
     argsMustContain?: string;
     argsMustNotContain?: string;
@@ -87,7 +103,11 @@ function withFakeClaudeEnv<A, E, R>(
     const binDir = yield* makeFakeClaudeBinary(tempDir);
     const previousPath = process.env.PATH;
     const previousOutput = process.env.T3_FAKE_CLAUDE_OUTPUT;
+    const previousSchemaOutput = process.env.T3_FAKE_CLAUDE_SCHEMA_OUTPUT;
     const previousExitCode = process.env.T3_FAKE_CLAUDE_EXIT_CODE;
+    const previousSchemaExitCode = process.env.T3_FAKE_CLAUDE_SCHEMA_EXIT_CODE;
+    const previousPlainOutput = process.env.T3_FAKE_CLAUDE_PLAIN_OUTPUT;
+    const previousPlainExitCode = process.env.T3_FAKE_CLAUDE_PLAIN_EXIT_CODE;
     const previousStderr = process.env.T3_FAKE_CLAUDE_STDERR;
     const previousArgsMustContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
     const previousArgsMustNotContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
@@ -99,10 +119,34 @@ function withFakeClaudeEnv<A, E, R>(
         process.env.PATH = `${binDir}:${previousPath ?? ""}`;
         process.env.T3_FAKE_CLAUDE_OUTPUT = input.output;
 
+        if (input.schemaOutput !== undefined) {
+          process.env.T3_FAKE_CLAUDE_SCHEMA_OUTPUT = input.schemaOutput;
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_SCHEMA_OUTPUT;
+        }
+
         if (input.exitCode !== undefined) {
           process.env.T3_FAKE_CLAUDE_EXIT_CODE = String(input.exitCode);
         } else {
           delete process.env.T3_FAKE_CLAUDE_EXIT_CODE;
+        }
+
+        if (input.schemaExitCode !== undefined) {
+          process.env.T3_FAKE_CLAUDE_SCHEMA_EXIT_CODE = String(input.schemaExitCode);
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_SCHEMA_EXIT_CODE;
+        }
+
+        if (input.plainOutput !== undefined) {
+          process.env.T3_FAKE_CLAUDE_PLAIN_OUTPUT = input.plainOutput;
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_PLAIN_OUTPUT;
+        }
+
+        if (input.plainExitCode !== undefined) {
+          process.env.T3_FAKE_CLAUDE_PLAIN_EXIT_CODE = String(input.plainExitCode);
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_PLAIN_EXIT_CODE;
         }
 
         if (input.stderr !== undefined) {
@@ -145,10 +189,34 @@ function withFakeClaudeEnv<A, E, R>(
             process.env.T3_FAKE_CLAUDE_OUTPUT = previousOutput;
           }
 
+          if (previousSchemaOutput === undefined) {
+            delete process.env.T3_FAKE_CLAUDE_SCHEMA_OUTPUT;
+          } else {
+            process.env.T3_FAKE_CLAUDE_SCHEMA_OUTPUT = previousSchemaOutput;
+          }
+
           if (previousExitCode === undefined) {
             delete process.env.T3_FAKE_CLAUDE_EXIT_CODE;
           } else {
             process.env.T3_FAKE_CLAUDE_EXIT_CODE = previousExitCode;
+          }
+
+          if (previousSchemaExitCode === undefined) {
+            delete process.env.T3_FAKE_CLAUDE_SCHEMA_EXIT_CODE;
+          } else {
+            process.env.T3_FAKE_CLAUDE_SCHEMA_EXIT_CODE = previousSchemaExitCode;
+          }
+
+          if (previousPlainOutput === undefined) {
+            delete process.env.T3_FAKE_CLAUDE_PLAIN_OUTPUT;
+          } else {
+            process.env.T3_FAKE_CLAUDE_PLAIN_OUTPUT = previousPlainOutput;
+          }
+
+          if (previousPlainExitCode === undefined) {
+            delete process.env.T3_FAKE_CLAUDE_PLAIN_EXIT_CODE;
+          } else {
+            process.env.T3_FAKE_CLAUDE_PLAIN_EXIT_CODE = previousPlainExitCode;
           }
 
           if (previousStderr === undefined) {
@@ -339,6 +407,134 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
           });
 
           expect(generated.title).toBe("New thread");
+        }),
+    ),
+  );
+
+  it.effect("runs YOLO reviews without bypassing Claude permissions", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            goalReached: false,
+            confidence: 70,
+            missing: ["Verification is missing"],
+            nextPrompt: "Run the verification and report the result.",
+            reviewNote: "More verification is needed.",
+          },
+        }),
+        argsMustContain:
+          "--permission-mode plan --tools Read,Grep,Glob,LS,WebSearch,WebFetch --allowedTools Read,Grep,Glob,LS,WebSearch,WebFetch",
+        argsMustNotContain: "--dangerously-skip-permissions",
+        stdinMustContain: "You are T3 Code's YOLO reviewer agent.",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateYoloReview({
+            cwd: process.cwd(),
+            goal: "Finish the feature",
+            transcript: "User: Finish the feature.",
+            latestAssistantText: "Implemented the feature.",
+            checkpointSummary: "No checkpoint summary is available.",
+            iteration: 1,
+            maxIterations: 10,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-sonnet-4-6",
+            },
+          });
+
+          expect(generated.goalReached).toBe(false);
+          expect(generated.nextPrompt).toBe("Run the verification and report the result.");
+        }),
+    ),
+  );
+
+  it.effect("normalizes loosely typed Claude YOLO structured output", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            goalReached: "false",
+            confidence: "70.4",
+            missing: "Verification is missing",
+            nextPrompt: "Run the verification and report the result.",
+            reviewNote: "More verification is needed.",
+          },
+        }),
+        argsMustContain:
+          "--permission-mode plan --tools Read,Grep,Glob,LS,WebSearch,WebFetch --allowedTools Read,Grep,Glob,LS,WebSearch,WebFetch",
+        argsMustNotContain: "--dangerously-skip-permissions",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateYoloReview({
+            cwd: process.cwd(),
+            goal: "Finish the feature",
+            transcript: "User: Finish the feature.",
+            latestAssistantText: "Implemented the feature.",
+            checkpointSummary: "No checkpoint summary is available.",
+            iteration: 1,
+            maxIterations: 10,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-sonnet-4-6",
+            },
+          });
+
+          expect(generated.goalReached).toBe(false);
+          expect(generated.confidence).toBe(70);
+          expect(generated.missing).toEqual(["Verification is missing"]);
+        }),
+    ),
+  );
+
+  it.effect("falls back to plain JSON when Claude YOLO structured output retries fail", () =>
+    withFakeClaudeEnv(
+      {
+        output: "",
+        schemaOutput: JSON.stringify({
+          type: "result",
+          subtype: "error_max_structured_output_retries",
+          errors: ["Failed to provide valid structured output after 5 attempts"],
+        }),
+        schemaExitCode: 1,
+        plainOutput: JSON.stringify({
+          result: [
+            "```json",
+            JSON.stringify({
+              goalReached: false,
+              confidence: 62,
+              missing: ["The worker did not verify the implementation"],
+              nextPrompt: "Verify the implementation and summarize the result.",
+              reviewNote: "The implementation still needs verification.",
+            }),
+            "```",
+          ].join("\n"),
+        }),
+        argsMustContain:
+          "--permission-mode plan --tools Read,Grep,Glob,LS,WebSearch,WebFetch --allowedTools Read,Grep,Glob,LS,WebSearch,WebFetch",
+        argsMustNotContain: "--dangerously-skip-permissions",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateYoloReview({
+            cwd: process.cwd(),
+            goal: "Finish the feature",
+            transcript: "User: Finish the feature.",
+            latestAssistantText: "Implemented the feature.",
+            checkpointSummary: "No checkpoint summary is available.",
+            iteration: 1,
+            maxIterations: 10,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-sonnet-4-6",
+            },
+          });
+
+          expect(generated.goalReached).toBe(false);
+          expect(generated.confidence).toBe(62);
+          expect(generated.nextPrompt).toBe("Verify the implementation and summarize the result.");
         }),
     ),
   );

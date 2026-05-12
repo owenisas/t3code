@@ -466,6 +466,59 @@ describe("buildCursorCapabilitiesFromConfigOptions", () => {
 });
 
 describe("buildCursorDiscoveredModelsFromConfigOptions", () => {
+  it("does not expose inert ACP config controls for launch-preset Cursor models", () => {
+    expect(
+      buildCursorDiscoveredModelsFromConfigOptions([
+        {
+          type: "select",
+          currentValue: "gpt-5.5-high",
+          options: [{ name: "GPT-5.5 High", value: "gpt-5.5-high" }],
+          category: "model",
+          id: "model",
+          name: "Model",
+        },
+        {
+          type: "select",
+          currentValue: "high",
+          options: [
+            { name: "Medium", value: "medium" },
+            { name: "High", value: "high" },
+            { name: "Extra High", value: "extra-high" },
+          ],
+          category: "thought_level",
+          id: "reasoning",
+          name: "Reasoning",
+        },
+        {
+          type: "select",
+          currentValue: "272k",
+          options: [
+            { name: "272K", value: "272k" },
+            { name: "1M", value: "1m" },
+          ],
+          category: "model_config",
+          id: "context",
+          name: "Context",
+        },
+      ]),
+    ).toEqual([
+      {
+        slug: "gpt-5.5-high",
+        name: "GPT-5.5 High",
+        isCustom: false,
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            selectDescriptor("reasoning", "Reasoning", [
+              { id: "medium", label: "Medium" },
+              { id: "high", label: "High", isDefault: true },
+              { id: "xhigh", label: "Extra High" },
+            ]),
+          ],
+        }),
+      },
+    ]);
+  });
+
   it("publishes ACP model choices immediately from session/new config options", () => {
     expect(buildCursorDiscoveredModelsFromConfigOptions(sessionNewCursorConfigOptions)).toEqual([
       {
@@ -803,7 +856,7 @@ describe("resolveCursorAcpLaunchModelOverride", () => {
       "gpt-5.3-codex-spark-preview",
     );
     expect(resolveCursorAcpLaunchModelOverride("gpt-5.3-codex-spark-preview-high")).toBe(
-      "gpt-5.3-codex-spark-preview",
+      "gpt-5.3-codex-spark-preview-high",
     );
     expect(
       resolveCursorAcpLaunchModelOverride("gpt-5.3-codex-spark", [
@@ -813,6 +866,45 @@ describe("resolveCursorAcpLaunchModelOverride", () => {
   });
 
   it("maps Cursor ACP base ids and options to executable CLI launch presets", () => {
+    expect(resolveCursorAcpLaunchModelOverride("gpt-5.4-high-fast")).toBe("gpt-5.4-high-fast");
+    expect(resolveCursorAcpLaunchModelOverride("gpt-5.3-codex-xhigh-fast")).toBe(
+      "gpt-5.3-codex-xhigh-fast",
+    );
+    expect(resolveCursorAcpLaunchModelOverride("gpt-5.2-codex-low-fast")).toBe(
+      "gpt-5.2-codex-low-fast",
+    );
+    expect(resolveCursorAcpLaunchModelOverride("gpt-5.1-codex-max-xhigh-fast")).toBe(
+      "gpt-5.1-codex-max-xhigh-fast",
+    );
+    expect(resolveCursorAcpLaunchModelOverride("gpt-5.1-high")).toBe("gpt-5.1-high");
+    expect(resolveCursorAcpLaunchModelOverride("gpt-5.1-codex-mini-low")).toBe(
+      "gpt-5.1-codex-mini-low",
+    );
+    expect(resolveCursorAcpLaunchModelOverride("claude-opus-4-7-thinking-medium")).toBe(
+      "claude-opus-4-7-thinking-medium",
+    );
+    expect(resolveCursorAcpLaunchModelOverride("claude-opus-4-7-medium")).toBe(
+      "claude-opus-4-7-medium",
+    );
+    expect(resolveCursorAcpLaunchModelOverride("claude-4.6-opus-max-thinking-fast")).toBe(
+      "claude-4.6-opus-max-thinking-fast",
+    );
+    expect(resolveCursorAcpLaunchModelOverride("claude-4.6-opus-max")).toBe("claude-4.6-opus-max");
+    expect(resolveCursorAcpLaunchModelOverride("claude-4.6-sonnet-medium-thinking")).toBe(
+      "claude-4.6-sonnet-medium-thinking",
+    );
+    expect(resolveCursorAcpLaunchModelOverride("claude-4.5-opus-high-thinking")).toBe(
+      "claude-4.5-opus-high-thinking",
+    );
+    expect(resolveCursorAcpLaunchModelOverride("claude-4.5-opus-high")).toBe(
+      "claude-4.5-opus-high",
+    );
+    expect(resolveCursorAcpLaunchModelOverride("claude-4.5-sonnet-thinking")).toBe(
+      "claude-4.5-sonnet-thinking",
+    );
+    expect(resolveCursorAcpLaunchModelOverride("claude-4-sonnet-thinking")).toBe(
+      "claude-4-sonnet-thinking",
+    );
     expect(
       resolveCursorAcpLaunchModelOverride("gpt-5.4", [
         { id: "reasoning", value: "high" },

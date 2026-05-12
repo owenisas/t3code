@@ -1,3 +1,4 @@
+// @effect-diagnostics importFromBarrel:off globalDate:off globalDateInEffect:off globalTimers:off globalErrorInEffectFailure:off
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -7,7 +8,7 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("029_RepairProjectionThreadShellSummary", (it) => {
+layer("034_RepairProjectionThreadShellSummary", (it) => {
   it.effect("repairs installs that skipped the original shell summary migrations", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -176,11 +177,11 @@ layer("029_RepairProjectionThreadShellSummary", (it) => {
           migration_id AS "migrationId",
           name
         FROM effect_sql_migrations
-        WHERE migration_id = 29
+        WHERE migration_id = 34
       `;
       assert.deepStrictEqual(migrationRows, [
         {
-          migrationId: 29,
+          migrationId: 34,
           name: "RepairProjectionThreadShellSummary",
         },
       ]);

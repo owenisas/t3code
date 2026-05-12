@@ -1,3 +1,4 @@
+// @effect-diagnostics importFromBarrel:off globalDate:off globalDateInEffect:off globalTimers:off globalErrorInEffectFailure:off
 import {
   CommandId,
   MessageId,
@@ -136,21 +137,34 @@ describe("decideOrchestrationCommand thread.fork", () => {
     expect(messageEvents.every((event) => event.payload.streaming === false)).toBe(true);
   });
 
-  it("rejects assistant messages as fork points", async () => {
-    await expect(
-      Effect.runPromise(
-        decideOrchestrationCommand({
-          readModel: makeReadModel(),
-          command: {
-            type: "thread.fork",
-            commandId: CommandId.make("cmd-thread-fork-invalid"),
-            threadId: ThreadId.make("thread-fork"),
-            sourceThreadId: ThreadId.make("thread-source"),
-            sourceMessageId: MessageId.make("message-assistant-1"),
-            createdAt: "2026-04-12T12:05:00.000Z",
-          },
-        }),
-      ),
-    ).rejects.toThrow("Only user messages can be used as fork points.");
+  it("creates a forked thread and copies through the selected assistant message", async () => {
+    const decided = await Effect.runPromise(
+      decideOrchestrationCommand({
+        readModel: makeReadModel(),
+        command: {
+          type: "thread.fork",
+          commandId: CommandId.make("cmd-thread-fork-assistant"),
+          threadId: ThreadId.make("thread-fork"),
+          sourceThreadId: ThreadId.make("thread-source"),
+          sourceMessageId: MessageId.make("message-assistant-1"),
+          createdAt: "2026-04-12T12:05:00.000Z",
+        },
+      }),
+    );
+    expect(Array.isArray(decided)).toBe(true);
+    if (!Array.isArray(decided)) {
+      throw new Error("Expected thread.fork to emit multiple events.");
+    }
+
+    expect(decided.map((event) => event.type)).toEqual([
+      "thread.created",
+      "thread.message-sent",
+      "thread.message-sent",
+    ]);
+    expect(decided.slice(1).map((event) => event.payload.role)).toEqual(["user", "assistant"]);
+    expect(decided.slice(1).map((event) => event.payload.text)).toEqual([
+      "Please debug the auth bug.",
+      "I’m checking the login flow now.",
+    ]);
   });
 });

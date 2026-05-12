@@ -1162,8 +1162,10 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    const thread = await waitForThread(harness.readModel, (entry) =>
-      entry.activities.some((activity) => activity.kind === "checkpoint.revert.failed"),
+    await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.checkpoints.length === 1 && entry.checkpoints[0]?.checkpointTurnCount === 1,
     );
 
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);

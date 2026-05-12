@@ -1,3 +1,4 @@
+// @effect-diagnostics importFromBarrel:off globalDate:off globalDateInEffect:off globalTimers:off globalErrorInEffectFailure:off
 /**
  * CursorAdapterLive — Cursor CLI (`agent acp`) via ACP.
  *
@@ -23,6 +24,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -85,6 +87,8 @@ const CURSOR_RESUME_VERSION = 1 as const;
 const ACP_PLAN_MODE_ALIASES = ["plan", "architect"];
 const ACP_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
 const ACP_APPROVAL_MODE_ALIASES = ["ask"];
+const DEFAULT_CURSOR_INTERRUPT_CANCEL_TIMEOUT_MS = 1_500;
+const DEFAULT_CURSOR_INTERRUPT_FORCE_STOP_GRACE_MS = 1_500;
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
@@ -128,6 +132,7 @@ interface CursorSessionContext {
   session: ProviderSession;
   readonly scope: Scope.Closeable;
   readonly acp: AcpSessionRuntimeShape;
+  readonly launchModelOverride: string | undefined;
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
@@ -167,6 +172,22 @@ function settlePendingUserInputsAsEmptyAnswers(
     {
       discard: true,
     },
+  );
+}
+
+function cursorInterruptCancelTimeout(): Duration.Duration {
+  const raw = process.env.T3_CURSOR_INTERRUPT_CANCEL_TIMEOUT_MS;
+  const parsed = raw === undefined ? NaN : Number.parseInt(raw, 10);
+  return Duration.millis(
+    Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CURSOR_INTERRUPT_CANCEL_TIMEOUT_MS,
+  );
+}
+
+function cursorInterruptForceStopGrace(): Duration.Duration {
+  const raw = process.env.T3_CURSOR_INTERRUPT_FORCE_STOP_GRACE_MS;
+  const parsed = raw === undefined ? NaN : Number.parseInt(raw, 10);
+  return Duration.millis(
+    Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CURSOR_INTERRUPT_FORCE_STOP_GRACE_MS,
   );
 }
 
@@ -822,6 +843,7 @@ export function makeCursorAdapter(
             session,
             scope: sessionScope,
             acp,
+            launchModelOverride,
             notificationFiber: undefined,
             pendingApprovals,
             pendingUserInputs,
@@ -955,11 +977,38 @@ export function makeCursorAdapter(
 
     const sendTurn: CursorAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
-        const ctx = yield* requireSession(input.threadId);
-        const turnId = TurnId.make(crypto.randomUUID());
+        let ctx = yield* requireSession(input.threadId);
         const turnModelSelection =
           input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
         const model = turnModelSelection?.model ?? ctx.session.model;
+        const requestedLaunchModelOverride = model
+          ? resolveCursorAcpLaunchModelOverride(model, turnModelSelection?.options)
+          : undefined;
+        if (requestedLaunchModelOverride !== ctx.launchModelOverride) {
+          yield* logDiagnostic({
+            threadId: input.threadId,
+            name: "turn.restarting_for_model",
+            payload: {
+              previousLaunchModelOverride: ctx.launchModelOverride ?? null,
+              requestedLaunchModelOverride: requestedLaunchModelOverride ?? null,
+              requestedModel: model ?? null,
+            },
+          });
+          const resumeCursor = ctx.session.resumeCursor;
+          const cwd = ctx.session.cwd;
+          const runtimeMode = ctx.session.runtimeMode;
+          yield* stopSessionInternal(ctx);
+          yield* startSession({
+            threadId: input.threadId,
+            provider: PROVIDER,
+            cwd,
+            runtimeMode,
+            ...(turnModelSelection ? { modelSelection: turnModelSelection } : {}),
+            ...(resumeCursor !== undefined ? { resumeCursor } : {}),
+          });
+          ctx = yield* requireSession(input.threadId);
+        }
+        const turnId = TurnId.make(crypto.randomUUID());
         const resolvedModel = resolveCursorAcpBaseModelId(model);
         yield* logDiagnostic({
           threadId: input.threadId,
@@ -1120,9 +1169,10 @@ export function makeCursorAdapter(
           );
 
         ctx.turns.push({ id: turnId, items: [{ prompt: promptParts, result }] });
+        ctx.activeTurnId = undefined;
         ctx.session = {
           ...ctx.session,
-          activeTurnId: turnId,
+          activeTurnId: undefined,
           updatedAt: yield* nowIso,
           model: resolvedModel,
         };
@@ -1151,13 +1201,57 @@ export function makeCursorAdapter(
         const ctx = yield* requireSession(threadId);
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
-        yield* Effect.ignore(
-          ctx.acp.cancel.pipe(
-            Effect.mapError((error) =>
-              mapAcpToAdapterError(PROVIDER, threadId, "session/cancel", error),
-            ),
+        const cancelResult = yield* Deferred.make<"cancelled" | "failed" | "timed-out">();
+        yield* ctx.acp.cancel.pipe(
+          Effect.as("cancelled" as const),
+          Effect.catch((error) =>
+            logDiagnostic({
+              threadId,
+              name: "turn.interrupt.cancel_failed",
+              level: "warning",
+              payload: {
+                error: mapAcpToAdapterError(PROVIDER, threadId, "session/cancel", error).message,
+              },
+            }).pipe(Effect.as("failed" as const)),
           ),
+          Effect.flatMap((outcome) => Deferred.succeed(cancelResult, outcome)),
+          Effect.forkChild,
         );
+        yield* Effect.sleep(cursorInterruptCancelTimeout()).pipe(
+          Effect.andThen(Deferred.succeed(cancelResult, "timed-out")),
+          Effect.forkChild,
+        );
+        const cancelOutcome = yield* Deferred.await(cancelResult);
+        if (cancelOutcome === "cancelled") {
+          yield* Effect.gen(function* () {
+            yield* Effect.sleep(cursorInterruptForceStopGrace());
+            if (ctx.stopped || ctx.activeTurnId === undefined) {
+              return;
+            }
+            yield* logDiagnostic({
+              threadId,
+              name: "turn.interrupt.force_stop",
+              level: "warning",
+              payload: {
+                reason: "Cursor ACP session remained active after session/cancel.",
+              },
+            });
+            yield* stopSessionInternal(ctx);
+          }).pipe(Effect.forkChild);
+          return;
+        }
+        yield* logDiagnostic({
+          threadId,
+          name: "turn.interrupt.force_stop",
+          level: "warning",
+          payload: {
+            reason:
+              cancelOutcome === "timed-out"
+                ? "Cursor ACP session/cancel did not settle before timeout."
+                : "Cursor ACP session/cancel failed.",
+          },
+        });
+        yield* stopSessionInternal(ctx);
       });
 
     const steerTurn: CursorAdapterShape["steerTurn"] = Effect.fn("steerTurn")(function* (_input) {

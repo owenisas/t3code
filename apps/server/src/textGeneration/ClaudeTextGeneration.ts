@@ -188,6 +188,9 @@ function normalizeYoloReviewStructuredOutput(
 
 const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
 const decodeClaudeOutputEnvelope = Schema.decodeEffect(Schema.fromJsonString(ClaudeOutputEnvelope));
+const decodeClaudePlainOutputEnvelope = Schema.decodeEffect(
+  Schema.fromJsonString(ClaudePlainOutputEnvelope),
+);
 
 export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
   claudeSettings: ClaudeSettings,
@@ -216,7 +219,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateYoloReview",
     value: unknown,
     detail: string,
   ): Effect.Effect<string, TextGenerationError> =>
@@ -288,7 +292,14 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 
     const safeReviewArgs =
       operation === "generateYoloReview"
-        ? (["--permission-mode", "plan", "--tools", ""] as const)
+        ? ([
+            "--permission-mode",
+            "plan",
+            "--tools",
+            "Read,Grep,Glob,LS,WebSearch,WebFetch",
+            "--allowedTools",
+            "Read,Grep,Glob,LS,WebSearch,WebFetch",
+          ] as const)
         : [];
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* () {
       const command = ChildProcess.make(
@@ -426,6 +437,14 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),
     };
+    const settingsJson =
+      Object.keys(settings).length > 0
+        ? yield* encodeJsonForOperation(
+            operation,
+            settings,
+            "Failed to encode Claude CLI settings.",
+          )
+        : undefined;
     const command = ChildProcess.make(
       claudeSettings.binaryPath || "claude",
       [
@@ -435,11 +454,13 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         "--model",
         resolveClaudeApiModelId(modelSelection),
         ...(cliEffort ? ["--effort", cliEffort] : []),
-        ...(Object.keys(settings).length > 0 ? ["--settings", JSON.stringify(settings)] : []),
+        ...(settingsJson ? ["--settings", settingsJson] : []),
         "--permission-mode",
         "plan",
         "--tools",
-        "",
+        "Read,Grep,Glob,LS,WebSearch,WebFetch",
+        "--allowedTools",
+        "Read,Grep,Glob,LS,WebSearch,WebFetch",
       ],
       {
         env: claudeEnvironment,
@@ -504,9 +525,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ),
     );
 
-    const envelope = yield* Schema.decodeEffect(Schema.fromJsonString(ClaudePlainOutputEnvelope))(
-      stdout,
-    ).pipe(
+    const envelope = yield* decodeClaudePlainOutputEnvelope(stdout).pipe(
       Effect.catchTag("SchemaError", (cause) =>
         Effect.fail(
           new TextGenerationError({
@@ -645,7 +664,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
             "",
             "Fallback output mode:",
             "Return ONLY one compact JSON object with keys goalReached, confidence, missing, nextPrompt, reviewNote.",
-            "Do not wrap the JSON in markdown. Do not use tools.",
+            "Do not wrap the JSON in markdown.",
           ].join("\n"),
           modelSelection,
         });

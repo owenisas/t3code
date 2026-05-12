@@ -579,10 +579,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       }
 
       const sourceMessage = sourceThread.messages[sourceMessageIndex];
-      if (!sourceMessage || sourceMessage.role !== "user") {
+      if (!sourceMessage || (sourceMessage.role !== "user" && sourceMessage.role !== "assistant")) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
-          detail: "Only user messages can be used as fork points.",
+          detail: "Only user and assistant messages can be used as fork points.",
+        });
+      }
+      if (sourceMessage.role === "assistant" && sourceMessage.streaming) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Streaming assistant messages cannot be used as fork points.",
         });
       }
 
@@ -613,8 +619,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       };
 
+      const copyEndIndex =
+        sourceMessage.role === "assistant" ? sourceMessageIndex + 1 : sourceMessageIndex;
       const copiedMessageEvents: ReadonlyArray<Omit<OrchestrationEvent, "sequence">> =
-        sourceThread.messages.slice(0, sourceMessageIndex).map((message, index) => {
+        sourceThread.messages.slice(0, copyEndIndex).map((message, index) => {
           const event = Object.assign(
             withEventBase({
               aggregateKind: "thread",
@@ -1043,11 +1051,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.interrupt": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const activeTurnId =
+        command.turnId ??
+        (thread.session?.activeTurnId === null ? undefined : thread.session?.activeTurnId);
       return {
         ...withEventBase({
           aggregateKind: "thread",
@@ -1058,7 +1069,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.turn-interrupt-requested",
         payload: {
           threadId: command.threadId,
-          ...(command.turnId !== undefined ? { turnId: command.turnId } : {}),
+          ...(activeTurnId !== undefined ? { turnId: activeTurnId } : {}),
           createdAt: command.createdAt,
         },
       };

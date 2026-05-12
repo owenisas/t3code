@@ -58,7 +58,14 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime";
-import { Link, useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-router";
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useParams,
+  useRouter,
+  useSearch,
+} from "@tanstack/react-router";
 import {
   MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
   MIN_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -104,6 +111,7 @@ import {
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "../threadRoutes";
+import { parseDiffRouteSearch, stripSplitSearchParams } from "../diffRouteSearch";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
@@ -1169,6 +1177,18 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     (settings) => settings.defaultThreadEnvMode,
   );
   const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
+  const routeThreadRef = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteRef(params),
+  });
+  const chatRouteSearch = useSearch({
+    strict: false,
+    select: (search) => parseDiffRouteSearch(search),
+  });
+  const splitThreadRef =
+    chatRouteSearch.splitEnv && chatRouteSearch.splitThread
+      ? scopeThreadRef(chatRouteSearch.splitEnv, chatRouteSearch.splitThread)
+      : null;
   const { updateSettings } = useUpdateSettings();
   const sidebarThreadPreviewCount = useSettings<SidebarThreadPreviewCount>(
     (settings) => settings.sidebarThreadPreviewCount,
@@ -2290,6 +2310,36 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             : []),
           { id: "rename", label: "Rename thread" },
           { id: thread.starredAt ? "unstar" : "star", label: thread.starredAt ? "Unstar" : "Star" },
+          {
+            id: "open-split",
+            label: "Open in split",
+            disabled:
+              !routeThreadRef ||
+              (routeThreadRef.environmentId === threadRef.environmentId &&
+                routeThreadRef.threadId === threadRef.threadId) ||
+              (splitThreadRef !== null &&
+                splitThreadRef.environmentId === threadRef.environmentId &&
+                splitThreadRef.threadId === threadRef.threadId),
+          },
+          {
+            id: "open-primary",
+            label: "Open in primary",
+            disabled:
+              !routeThreadRef ||
+              (routeThreadRef.environmentId === threadRef.environmentId &&
+                routeThreadRef.threadId === threadRef.threadId),
+          },
+          {
+            id: "open-secondary",
+            label: "Open in secondary",
+            disabled:
+              !routeThreadRef ||
+              (routeThreadRef.environmentId === threadRef.environmentId &&
+                routeThreadRef.threadId === threadRef.threadId) ||
+              (splitThreadRef !== null &&
+                splitThreadRef.environmentId === threadRef.environmentId &&
+                splitThreadRef.threadId === threadRef.threadId),
+          },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
@@ -2392,6 +2442,37 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return;
       }
 
+      if (clicked === "open-split" || clicked === "open-secondary") {
+        if (!routeThreadRef) return;
+        void router.navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(routeThreadRef),
+          search: (previous) => ({
+            ...previous,
+            splitEnv: threadRef.environmentId,
+            splitThread: threadRef.threadId,
+            focusedPane: "secondary",
+          }),
+        });
+        return;
+      }
+
+      if (clicked === "open-primary") {
+        const nextIsCurrentSecondary =
+          splitThreadRef &&
+          splitThreadRef.environmentId === threadRef.environmentId &&
+          splitThreadRef.threadId === threadRef.threadId;
+        void router.navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+          search: (previous) =>
+            nextIsCurrentSecondary
+              ? stripSplitSearchParams(previous)
+              : { ...previous, focusedPane: "primary" },
+        });
+        return;
+      }
+
       if (clicked === "mark-unread") {
         markThreadUnread(threadKey, thread.latestTurn?.completedAt);
         return;
@@ -2436,8 +2517,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       markThreadUnread,
       memberProjectByScopedKey,
       project.cwd,
+      routeThreadRef,
       router,
       scheduledJobThreadInfoByKey,
+      splitThreadRef,
       toggleThreadStar,
     ],
   );
@@ -3309,7 +3392,19 @@ export default function Sidebar() {
     strict: false,
     select: (params) => resolveThreadRouteRef(params),
   });
+  const chatRouteSearch = useSearch({
+    strict: false,
+    select: (search) => parseDiffRouteSearch(search),
+  });
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
+  const splitThreadRef =
+    chatRouteSearch.splitEnv && chatRouteSearch.splitThread
+      ? scopeThreadRef(chatRouteSearch.splitEnv, chatRouteSearch.splitThread)
+      : null;
+  const splitOpen = Boolean(
+    chatRouteSearch.splitEnv || chatRouteSearch.splitThread || chatRouteSearch.focusedPane,
+  );
+  const focusedPane = splitOpen ? (chatRouteSearch.focusedPane ?? "secondary") : "primary";
   const keybindings = useServerKeybindings();
   const openAddProjectCommandPalette = useCommandPaletteStore((store) => store.openAddProject);
   const [threadListVisibleCountsByProject, setThreadListVisibleCountsByProject] = useState<
@@ -3463,12 +3558,66 @@ export default function Sidebar() {
       if (isMobile) {
         setOpenMobile(false);
       }
+      if (routeThreadRef && splitOpen) {
+        if (focusedPane === "secondary") {
+          if (
+            threadRef.environmentId === routeThreadRef.environmentId &&
+            threadRef.threadId === routeThreadRef.threadId
+          ) {
+            void navigate({
+              to: "/$environmentId/$threadId",
+              params: buildThreadRouteParams(routeThreadRef),
+              search: (previous) => stripSplitSearchParams(previous),
+            });
+            return;
+          }
+          void navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(routeThreadRef),
+            search: (previous) => ({
+              ...previous,
+              splitEnv: threadRef.environmentId,
+              splitThread: threadRef.threadId,
+              focusedPane: "secondary",
+            }),
+          });
+          return;
+        }
+        if (
+          splitThreadRef &&
+          threadRef.environmentId === splitThreadRef.environmentId &&
+          threadRef.threadId === splitThreadRef.threadId
+        ) {
+          void navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(threadRef),
+            search: (previous) => stripSplitSearchParams(previous),
+          });
+          return;
+        }
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+          search: (previous) => ({ ...previous, focusedPane: "primary" }),
+        });
+        return;
+      }
       void navigate({
         to: "/$environmentId/$threadId",
         params: buildThreadRouteParams(threadRef),
       });
     },
-    [clearSelection, isMobile, navigate, setOpenMobile, setSelectionAnchor],
+    [
+      clearSelection,
+      focusedPane,
+      isMobile,
+      navigate,
+      routeThreadRef,
+      setOpenMobile,
+      setSelectionAnchor,
+      splitOpen,
+      splitThreadRef,
+    ],
   );
 
   const projectDnDSensors = useSensors(

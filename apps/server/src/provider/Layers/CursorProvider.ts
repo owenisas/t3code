@@ -497,18 +497,58 @@ function buildCursorClaudeCapabilities(input?: {
   });
 }
 
+function inferCursorLaunchReasoning(
+  model: string,
+): "none" | "low" | "medium" | "high" | "xhigh" | "max" | undefined {
+  const normalized = normalizeCursorConfigOptionToken(model);
+  if (
+    normalized.includes("extra-high") ||
+    normalized.endsWith("-xhigh") ||
+    normalized.includes("-xhigh-")
+  ) {
+    return "xhigh";
+  }
+  if (normalized.endsWith("-high") || normalized.includes("-high-")) {
+    return "high";
+  }
+  if (normalized.endsWith("-low") || normalized.includes("-low-")) {
+    return "low";
+  }
+  if (normalized.endsWith("-none") || normalized.includes("-none-")) {
+    return "none";
+  }
+  if (normalized.endsWith("-medium") || normalized.includes("-medium-")) {
+    return "medium";
+  }
+  if (normalized.endsWith("-max") || normalized.includes("-max-")) {
+    return "max";
+  }
+  return undefined;
+}
+
 function getCursorFallbackCapabilitiesForModel(model: string): ModelCapabilities {
-  switch (model) {
+  const baseModel = resolveCursorAcpBaseModelId(model);
+  const inferredReasoning = inferCursorLaunchReasoning(model);
+  switch (baseModel) {
     case "gpt-5.5":
       return buildCursorGptCapabilities({
-        reasoning: "medium",
+        reasoning:
+          inferredReasoning === "high" || inferredReasoning === "xhigh"
+            ? inferredReasoning
+            : "medium",
         reasoningValues: ["medium", "high", "xhigh"],
         context: "1m",
         includeContext: false,
         includeFast: false,
       });
     case "gpt-5.4":
-      return buildCursorGptCapabilities({ context: "1m" });
+      return buildCursorGptCapabilities({
+        reasoning:
+          inferredReasoning === "none" || inferredReasoning === "max"
+            ? "medium"
+            : (inferredReasoning ?? "medium"),
+        context: "1m",
+      });
     case "gpt-5.3-codex":
     case "gpt-5.2":
     case "gpt-5.2-codex":
@@ -589,14 +629,22 @@ export function buildCursorDiscoveredModelsFromConfigOptions(
   const currentModelCapabilities = buildCursorCapabilitiesFromConfigOptions(configOptions);
 
   return buildCursorDiscoveredModels(
-    modelChoices.map((modelChoice) => ({
-      slug: modelChoice.value.trim(),
-      name: modelChoice.name.trim(),
-      capabilities:
-        currentModelValue === modelChoice.value.trim()
-          ? currentModelCapabilities
-          : getCursorFallbackCapabilitiesForModel(modelChoice.value.trim()),
-    })),
+    modelChoices.map((modelChoice) => {
+      const slug = modelChoice.value.trim();
+      const fallbackCapabilities = getCursorFallbackCapabilitiesForModel(slug);
+      const shouldTrustStaticLaunchCapabilities =
+        isCursorAcpLaunchOnlyModel(slug) &&
+        (fallbackCapabilities.optionDescriptors?.length ?? 0) > 0;
+      return {
+        slug,
+        name: modelChoice.name.trim(),
+        capabilities: shouldTrustStaticLaunchCapabilities
+          ? fallbackCapabilities
+          : currentModelValue === slug
+            ? currentModelCapabilities
+            : fallbackCapabilities,
+      };
+    }),
   );
 }
 
@@ -691,10 +739,49 @@ function cursorReasoningSuffix(
   return requested ?? fallback;
 }
 
-function cursorFastSuffix(
+function cursorModelToken(model: string | null | undefined): string {
+  return normalizeCursorConfigOptionToken(model);
+}
+
+function cursorLaunchReasoningFallback(
+  model: string | null | undefined,
+  fallback: "none" | "low" | "medium" | "high" | "xhigh" | "max",
+): "none" | "low" | "medium" | "high" | "xhigh" | "max" {
+  return inferCursorLaunchReasoning(model ?? "") ?? fallback;
+}
+
+function cursorLaunchFastFallback(model: string | null | undefined): boolean {
+  return cursorModelToken(model).endsWith("-fast");
+}
+
+function cursorLaunchThinkingFallback(
+  model: string | null | undefined,
+  fallback: boolean,
+): boolean {
+  const token = cursorModelToken(model);
+  if (token.includes("-thinking-") || token.endsWith("-thinking")) {
+    return true;
+  }
+  return inferCursorLaunchReasoning(model ?? "") === undefined ? fallback : false;
+}
+
+function cursorFastSuffixForModel(
+  model: string | null | undefined,
   selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
 ): string {
-  return getProviderOptionBooleanSelectionValue(selections, "fastMode") ? "-fast" : "";
+  const requested = getProviderOptionBooleanSelectionValue(selections, "fastMode");
+  return (requested ?? cursorLaunchFastFallback(model)) ? "-fast" : "";
+}
+
+function cursorThinkingForModel(
+  model: string | null | undefined,
+  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  fallback: boolean,
+): boolean {
+  return (
+    getProviderOptionBooleanSelectionValue(selections, "thinking") ??
+    cursorLaunchThinkingFallback(model, fallback)
+  );
 }
 
 export function resolveCursorAcpLaunchModelOverride(
@@ -702,8 +789,9 @@ export function resolveCursorAcpLaunchModelOverride(
   selections?: ReadonlyArray<ProviderOptionSelection> | null | undefined,
 ): string | undefined {
   const baseModel = resolveCursorAcpBaseModelId(model);
-  const effort = cursorReasoningSuffix(selections, "medium");
-  const fast = cursorFastSuffix(selections);
+  const defaultEffort = cursorLaunchReasoningFallback(model, "medium");
+  const effort = cursorReasoningSuffix(selections, defaultEffort);
+  const fast = cursorFastSuffixForModel(model, selections);
   switch (baseModel) {
     case "gpt-5.5":
       return `gpt-5.5-${
@@ -749,30 +837,36 @@ export function resolveCursorAcpLaunchModelOverride(
     case "gpt-5-mini":
       return "gpt-5-mini";
     case "claude-opus-4-7": {
-      const claudeEffort = cursorReasoningSuffix(selections, "high");
-      const thinking = getProviderOptionBooleanSelectionValue(selections, "thinking") ?? true;
+      const claudeEffort = cursorReasoningSuffix(
+        selections,
+        cursorLaunchReasoningFallback(model, "high"),
+      );
+      const thinking = cursorThinkingForModel(model, selections, true);
       return `claude-opus-4-7${thinking ? "-thinking" : ""}-${claudeEffort === "none" ? "medium" : claudeEffort}`;
     }
     case "claude-opus-4-6": {
-      const claudeEffort = cursorReasoningSuffix(selections, "high");
-      const thinking = getProviderOptionBooleanSelectionValue(selections, "thinking") ?? true;
+      const claudeEffort = cursorReasoningSuffix(
+        selections,
+        cursorLaunchReasoningFallback(model, "high"),
+      );
+      const thinking = cursorThinkingForModel(model, selections, true);
       const supportedEffort = claudeEffort === "max" ? "max" : "high";
       return `claude-4.6-opus-${supportedEffort}${thinking ? "-thinking" : ""}${fast}`;
     }
     case "claude-sonnet-4-6": {
-      const thinking = getProviderOptionBooleanSelectionValue(selections, "thinking") ?? false;
+      const thinking = cursorThinkingForModel(model, selections, false);
       return `claude-4.6-sonnet-medium${thinking ? "-thinking" : ""}`;
     }
     case "claude-opus-4-5": {
-      const thinking = getProviderOptionBooleanSelectionValue(selections, "thinking") ?? true;
+      const thinking = cursorThinkingForModel(model, selections, true);
       return `claude-4.5-opus-high${thinking ? "-thinking" : ""}`;
     }
     case "claude-sonnet-4-5": {
-      const thinking = getProviderOptionBooleanSelectionValue(selections, "thinking") ?? false;
+      const thinking = cursorThinkingForModel(model, selections, false);
       return `claude-4.5-sonnet${thinking ? "-thinking" : ""}`;
     }
     case "claude-sonnet-4": {
-      const thinking = getProviderOptionBooleanSelectionValue(selections, "thinking") ?? false;
+      const thinking = cursorThinkingForModel(model, selections, false);
       return `claude-4-sonnet${thinking ? "-thinking" : ""}`;
     }
   }

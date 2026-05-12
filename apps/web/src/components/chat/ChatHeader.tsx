@@ -9,7 +9,13 @@ import { scopeThreadRef } from "@t3tools/client-runtime";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { DiffIcon, TerminalSquareIcon } from "lucide-react";
+import {
+  ArrowLeftRightIcon,
+  DiffIcon,
+  Columns2Icon,
+  TerminalSquareIcon,
+  XIcon,
+} from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
@@ -36,12 +42,20 @@ interface ChatHeaderProps {
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
   diffOpen: boolean;
+  isSplitPane?: boolean;
+  isFocusedPane?: boolean;
+  canOpenSplit?: boolean;
+  canCloseSplitPane?: boolean;
+  canSwapSplitPane?: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onToggleTerminal: () => void;
   onToggleDiff: () => void;
+  onOpenSplit?: () => void;
+  onCloseSplitPane?: () => void;
+  onSwapSplitPane?: () => void;
 }
 
 export function shouldShowOpenInPicker(input: {
@@ -74,12 +88,20 @@ export const ChatHeader = memo(function ChatHeader({
   diffToggleShortcutLabel,
   gitCwd,
   diffOpen,
+  isSplitPane = false,
+  isFocusedPane = true,
+  canOpenSplit = false,
+  canCloseSplitPane = false,
+  canSwapSplitPane = false,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
   onToggleTerminal,
   onToggleDiff,
+  onOpenSplit,
+  onCloseSplitPane,
+  onSwapSplitPane,
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const showOpenInPicker = shouldShowOpenInPicker({
@@ -108,6 +130,14 @@ export const ChatHeader = memo(function ChatHeader({
             No Git
           </Badge>
         )}
+        {isSplitPane && (
+          <Badge
+            variant="outline"
+            className={isFocusedPane ? "shrink-0 text-[10px] text-primary" : "shrink-0 text-[10px]"}
+          >
+            {isFocusedPane ? "Focused" : "Split"}
+          </Badge>
+        )}
       </div>
       <div className="flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3">
         {activeProjectScripts && (
@@ -134,6 +164,58 @@ export const ChatHeader = memo(function ChatHeader({
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
             {...(draftId ? { draftId } : {})}
           />
+        )}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                className="shrink-0"
+                pressed={isSplitPane}
+                onPressedChange={() => {
+                  if (isSplitPane) {
+                    onCloseSplitPane?.();
+                  } else {
+                    onOpenSplit?.();
+                  }
+                }}
+                aria-label={isSplitPane ? "Close split pane" : "Open split pane"}
+                variant="outline"
+                size="xs"
+                disabled={isSplitPane ? !canCloseSplitPane : !canOpenSplit}
+              >
+                {isSplitPane ? <XIcon className="size-3" /> : <Columns2Icon className="size-3" />}
+              </Toggle>
+            }
+          />
+          <TooltipPopup side="bottom">
+            {isSplitPane
+              ? canCloseSplitPane
+                ? "Close split pane"
+                : "Split pane cannot be closed here"
+              : canOpenSplit
+                ? "Open split pane"
+                : "Split is available for server-backed threads"}
+          </TooltipPopup>
+        </Tooltip>
+        {isSplitPane && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  className="shrink-0"
+                  pressed={false}
+                  onPressedChange={onSwapSplitPane}
+                  aria-label="Swap split panes"
+                  variant="outline"
+                  size="xs"
+                  disabled={!canSwapSplitPane}
+                >
+                  <ArrowLeftRightIcon className="size-3" />
+                </Toggle>
+              }
+            />
+            <TooltipPopup side="bottom">Swap split panes</TooltipPopup>
+          </Tooltip>
         )}
         <Tooltip>
           <TooltipTrigger

@@ -686,6 +686,22 @@ export interface ChatComposerProps {
   onExpandImage: (preview: ExpandedImagePreview) => void;
 }
 
+function findLatestRecallableUserMessage(thread: Thread | undefined): string | null {
+  const messages = thread?.messages ?? [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (
+      message?.role === "user" &&
+      message.origin !== "yolo-reviewer" &&
+      !message.streaming &&
+      message.text.trim().length > 0
+    ) {
+      return message.text;
+    }
+  }
+  return null;
+}
+
 // --------------------------------------------------------------------------
 // Component
 // --------------------------------------------------------------------------
@@ -1911,6 +1927,34 @@ export const ChatComposer = memo(
         }
         if ((key === "Enter" || key === "Tab") && selectedItem) {
           onSelectComposerItem(selectedItem);
+          return true;
+        }
+      }
+      if (
+        key === "ArrowUp" &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.shiftKey &&
+        !isConnecting &&
+        !isSendBusy &&
+        !activePendingProgress &&
+        !isComposerApprovalState &&
+        promptRef.current.trim().length === 0 &&
+        composerImagesRef.current.length === 0 &&
+        composerTerminalContextsRef.current.length === 0
+      ) {
+        const previousMessage = findLatestRecallableUserMessage(activeThread);
+        if (previousMessage) {
+          promptRef.current = previousMessage;
+          setComposerDraftPrompt(composerDraftTarget, previousMessage);
+          const nextCursor = collapseExpandedComposerCursor(
+            previousMessage,
+            previousMessage.length,
+          );
+          setComposerCursor(nextCursor);
+          setComposerTrigger(detectComposerTrigger(previousMessage, previousMessage.length));
+          composerEditorRef.current?.focusAt(nextCursor);
           return true;
         }
       }

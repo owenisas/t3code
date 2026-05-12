@@ -1,3 +1,4 @@
+// @effect-diagnostics importFromBarrel:off globalDate:off globalDateInEffect:off globalTimers:off globalErrorInEffectFailure:off
 import { Context, Effect } from "effect";
 import type { ModelSelection, TextGenerationError } from "@t3tools/contracts";
 

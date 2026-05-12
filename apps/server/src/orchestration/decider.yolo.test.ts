@@ -1,3 +1,4 @@
+// @effect-diagnostics importFromBarrel:off globalDate:off globalDateInEffect:off globalTimers:off globalErrorInEffectFailure:off
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,

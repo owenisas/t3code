@@ -884,41 +884,30 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
   ),
 );
 
-it.live(
-  "appends checkpoint.revert.failed activity when revert is requested without an active session",
-  () =>
-    withHarness((harness) =>
-      Effect.gen(function* () {
-        yield* seedProjectAndThread(harness);
+it.live("restores checkpoint zero when revert is requested without an active session", () =>
+  withHarness((harness) =>
+    Effect.gen(function* () {
+      yield* seedProjectAndThread(harness);
 
-        yield* harness.engine.dispatch({
-          type: "thread.checkpoint.revert",
-          commandId: CommandId.make("cmd-checkpoint-revert-no-session"),
-          threadId: THREAD_ID,
-          turnCount: 0,
-          createdAt: nowIso(),
-        });
+      yield* harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-checkpoint-revert-no-session"),
+        threadId: THREAD_ID,
+        turnCount: 0,
+        createdAt: nowIso(),
+      });
 
-        const thread = yield* harness.waitForThread(THREAD_ID, (entry) =>
-          entry.activities.some(
-            (activity) =>
-              activity.kind === "checkpoint.revert.failed" &&
-              typeof activity.payload === "object" &&
-              activity.payload !== null,
-          ),
-        );
-        const failureActivity = thread.activities.find(
-          (activity) => activity.kind === "checkpoint.revert.failed",
-        );
-        assert.equal(failureActivity !== undefined, true);
-        assert.equal(
-          String(
-            (failureActivity?.payload as { readonly detail?: string } | undefined)?.detail,
-          ).includes("No active provider session"),
-          true,
-        );
-      }),
-    ),
+      const events = yield* harness.waitForDomainEvent((event) => event.type === "thread.reverted");
+      assert.equal(
+        events.some((event) => event.type === "thread.reverted"),
+        true,
+      );
+      const thread = yield* harness.waitForThread(THREAD_ID, (entry) =>
+        entry.activities.every((activity) => activity.kind !== "checkpoint.revert.failed"),
+      );
+      assert.equal(thread.checkpoints.length, 0);
+    }),
+  ),
 );
 
 it.live("starts a claudeAgent session on first turn when provider is requested", () =>

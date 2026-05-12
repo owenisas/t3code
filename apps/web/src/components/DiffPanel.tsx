@@ -179,11 +179,21 @@ function getDiffCollapseIconClassName(fileDiff: FileDiffMetadata): string {
 
 interface DiffPanelProps {
   mode?: DiffPanelMode;
+  threadRef?: ReturnType<typeof scopeThreadRef> | null;
+  diffSearch?: ReturnType<typeof parseDiffRouteSearch>;
+  onSelectTurn?: (turnId: TurnId) => void;
+  onSelectWholeConversation?: () => void;
 }
 
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
-export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
+export default function DiffPanel({
+  mode = "inline",
+  threadRef,
+  diffSearch: controlledDiffSearch,
+  onSelectTurn,
+  onSelectWholeConversation,
+}: DiffPanelProps) {
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
   const settings = useSettings();
@@ -202,11 +212,16 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     strict: false,
     select: (params) => resolveThreadRouteRef(params),
   });
-  const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
+  const routeDiffSearch = useSearch({
+    strict: false,
+    select: (search) => parseDiffRouteSearch(search),
+  });
+  const resolvedThreadRef = threadRef === undefined ? routeThreadRef : threadRef;
+  const diffSearch = controlledDiffSearch ?? routeDiffSearch;
   const diffOpen = diffSearch.diff === "1";
-  const activeThreadId = routeThreadRef?.threadId ?? null;
+  const activeThreadId = resolvedThreadRef?.threadId ?? null;
   const activeThread = useStore(
-    useMemo(() => createThreadSelectorByRef(routeThreadRef), [routeThreadRef]),
+    useMemo(() => createThreadSelectorByRef(resolvedThreadRef), [resolvedThreadRef]),
   );
   const activeProjectId = activeThread?.projectId ?? null;
   const activeProject = useStore((store) =>
@@ -391,6 +406,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   }, []);
 
   const selectTurn = (turnId: TurnId) => {
+    if (onSelectTurn) {
+      onSelectTurn(turnId);
+      return;
+    }
     if (!activeThread) return;
     void navigate({
       to: "/$environmentId/$threadId",
@@ -402,6 +421,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     });
   };
   const selectWholeConversation = () => {
+    if (onSelectWholeConversation) {
+      onSelectWholeConversation();
+      return;
+    }
     if (!activeThread) return;
     void navigate({
       to: "/$environmentId/$threadId",

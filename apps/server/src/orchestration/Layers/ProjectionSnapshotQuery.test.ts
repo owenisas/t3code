@@ -6,6 +6,7 @@ import {
   ThreadId,
   TurnId,
   ProviderInstanceId,
+  YoloRunId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -345,6 +346,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           createdAt: "2026-02-24T00:00:02.000Z",
           updatedAt: "2026-02-24T00:00:03.000Z",
           archivedAt: null,
+          starredAt: null,
           deletedAt: null,
           messages: [
             {
@@ -456,6 +458,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           createdAt: "2026-02-24T00:00:02.000Z",
           updatedAt: "2026-02-24T00:00:03.000Z",
           archivedAt: null,
+          starredAt: null,
           session: {
             threadId: ThreadId.make("thread-1"),
             status: "running",
@@ -1475,6 +1478,363 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.equal(shellSnapshot.projects.length, 0);
       assert.equal(shellSnapshot.threads.length, 0);
     }),
+  );
+
+  it.effect("hydrates scheduled jobs in the command read model after restart", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_scheduled_job_runs`;
+      yield* sql`DELETE FROM projection_scheduled_jobs`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_thread_proposed_plans`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-scheduled-command',
+          'Scheduled Command Project',
+          '/tmp/project-scheduled-command',
+          '{"instanceId":"codex","model":"gpt-5-codex"}',
+          '[]',
+          '2026-04-06T00:00:00.000Z',
+          '2026-04-06T00:00:00.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_scheduled_jobs (
+          job_id,
+          project_id,
+          title,
+          prompt,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          status,
+          schedule_json,
+          last_run_at,
+          next_run_at,
+          last_outcome,
+          last_thread_id,
+          last_error,
+          active_run_id,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'manifest:project-scheduled-command:daily',
+          'project-scheduled-command',
+          'Daily job',
+          'Run the scheduled task',
+          '{"instanceId":"cursor","model":"claude-opus-4-7"}',
+          'full-access',
+          'plan',
+          'active',
+          '{"type":"interval","intervalMinutes":60}',
+          '2026-04-06T00:00:00.000Z',
+          '2026-04-06T02:00:00.000Z',
+          'succeeded',
+          'thread-scheduled-command',
+          NULL,
+          'run-scheduled-command',
+          '2026-04-06T00:00:00.000Z',
+          '2026-04-06T01:00:00.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_scheduled_job_runs (
+          run_id,
+          job_id,
+          thread_id,
+          trigger,
+          started_at,
+          completed_at,
+          outcome,
+          error
+        )
+        VALUES (
+          'run-scheduled-command',
+          'manifest:project-scheduled-command:daily',
+          'thread-scheduled-command',
+          'schedule',
+          '2026-04-06T01:00:00.000Z',
+          NULL,
+          NULL,
+          NULL
+        )
+      `;
+
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      const job = commandReadModel.scheduledJobs[0];
+
+      assert.equal(job?.id, "manifest:project-scheduled-command:daily");
+      assert.equal(job?.projectId, asProjectId("project-scheduled-command"));
+      assert.equal(job?.activeRun?.id, "run-scheduled-command");
+      assert.equal(job?.runs.length, 1);
+      assert.equal(job?.modelSelection.instanceId, ProviderInstanceId.make("cursor"));
+      assert.equal(job?.runtimeMode, "full-access");
+      assert.equal(job?.interactionMode, "plan");
+    }),
+  );
+
+  it.effect("hydrates thread messages in the command read model after restart", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_thread_proposed_plans`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-command-messages',
+          'Command Messages Project',
+          '/tmp/project-command-messages',
+          '{"instanceId":"codex","model":"gpt-5-codex"}',
+          '[]',
+          '2026-04-07T00:00:00.000Z',
+          '2026-04-07T00:00:00.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-command-messages',
+          'project-command-messages',
+          'Thread with messages',
+          '{"instanceId":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          NULL,
+          '2026-04-07T00:00:01.000Z',
+          0,
+          0,
+          0,
+          '2026-04-07T00:00:00.000Z',
+          '2026-04-07T00:00:00.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id,
+          thread_id,
+          turn_id,
+          role,
+          origin,
+          text,
+          attachments_json,
+          is_streaming,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          'message-command-user',
+          'thread-command-messages',
+          NULL,
+          'user',
+          'human',
+          'Fork from this message.',
+          '[]',
+          0,
+          '2026-04-07T00:00:01.000Z',
+          '2026-04-07T00:00:01.000Z'
+        )
+      `;
+
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      const thread = commandReadModel.threads[0];
+
+      assert.equal(thread?.id, ThreadId.make("thread-command-messages"));
+      assert.equal(thread?.messages[0]?.id, asMessageId("message-command-user"));
+      assert.equal(thread?.messages[0]?.role, "user");
+      assert.equal(thread?.messages[0]?.text, "Fork from this message.");
+    }),
+  );
+
+  it.effect(
+    "hydrates queued follow-ups and YOLO state in the command read model after restart",
+    () =>
+      Effect.gen(function* () {
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* sql`DELETE FROM projection_thread_queued_follow_ups`;
+        yield* sql`DELETE FROM projection_projects`;
+        yield* sql`DELETE FROM projection_threads`;
+        yield* sql`DELETE FROM projection_thread_messages`;
+        yield* sql`DELETE FROM projection_thread_proposed_plans`;
+        yield* sql`DELETE FROM projection_thread_sessions`;
+        yield* sql`DELETE FROM projection_turns`;
+        yield* sql`DELETE FROM projection_state`;
+
+        yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-command-state',
+          'Command State Project',
+          '/tmp/project-command-state',
+          '{"instanceId":"codex","model":"gpt-5-codex"}',
+          '[]',
+          '2026-04-08T00:00:00.000Z',
+          '2026-04-08T00:00:00.000Z',
+          NULL
+        )
+      `;
+
+        yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          yolo_run_json,
+          fork_source_thread_id,
+          fork_source_message_id,
+          fork_context_hydrated_at,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-command-state',
+          'project-command-state',
+          'Thread with command state',
+          '{"instanceId":"cursor","model":"composer-2"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          NULL,
+          '2026-04-08T00:00:01.000Z',
+          0,
+          0,
+          0,
+          '{"id":"run-command-yolo","threadId":"thread-command-state","goal":"Finish the task","status":"active","maxIterations":10,"triggerDelaySeconds":0,"iteration":1,"lastReview":null,"reviews":[],"lastError":null,"startedAt":"2026-04-08T00:00:01.000Z","completedAt":null,"updatedAt":"2026-04-08T00:00:02.000Z"}',
+          'thread-source',
+          'message-source',
+          '2026-04-08T00:00:03.000Z',
+          '2026-04-08T00:00:00.000Z',
+          '2026-04-08T00:00:02.000Z',
+          NULL
+        )
+      `;
+
+        yield* sql`
+        INSERT INTO projection_thread_queued_follow_ups (
+          follow_up_id,
+          thread_id,
+          message_id,
+          text,
+          attachments_json,
+          model_selection_json,
+          interaction_mode,
+          queued_at
+        )
+        VALUES (
+          'follow-up-command-state',
+          'thread-command-state',
+          'message-follow-up-command-state',
+          'Queued follow-up after restart',
+          '[]',
+          '{"instanceId":"cursor","model":"composer-2"}',
+          'plan',
+          '2026-04-08T00:00:04.000Z'
+        )
+      `;
+
+        const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+        const thread = commandReadModel.threads[0];
+
+        assert.equal(thread?.id, ThreadId.make("thread-command-state"));
+        assert.equal(thread?.queuedFollowUps[0]?.id, "follow-up-command-state");
+        assert.equal(thread?.queuedFollowUps[0]?.interactionMode, "plan");
+        assert.equal(
+          thread?.queuedFollowUps[0]?.modelSelection?.instanceId,
+          ProviderInstanceId.make("cursor"),
+        );
+        assert.equal(thread?.yoloRun?.id, YoloRunId.make("run-command-yolo"));
+        assert.equal(thread?.yoloRun?.status, "active");
+        assert.deepEqual(thread?.forkOrigin, {
+          sourceThreadId: ThreadId.make("thread-source"),
+          sourceMessageId: asMessageId("message-source"),
+          hydratedAt: "2026-04-08T00:00:03.000Z",
+        });
+      }),
   );
 });
 

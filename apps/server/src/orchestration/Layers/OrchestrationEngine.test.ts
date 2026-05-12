@@ -190,6 +190,7 @@ describe("OrchestrationEngine", () => {
             Effect.succeed({
               snapshotSequence: projectionSnapshot.snapshotSequence,
               projects: [],
+              scheduledJobs: [],
               threads: [],
               updatedAt: projectionSnapshot.updatedAt,
             }),

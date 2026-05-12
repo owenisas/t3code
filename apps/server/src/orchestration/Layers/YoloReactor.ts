@@ -1,3 +1,4 @@
+// @effect-diagnostics importFromBarrel:off globalDate:off globalDateInEffect:off globalTimers:off globalErrorInEffectFailure:off
 import {
   CommandId,
   EventId,
@@ -14,7 +15,6 @@ import type { Scope } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
 import type { OrchestrationDispatchError } from "../Errors.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { YoloEvaluator } from "../Services/YoloEvaluator.ts";
@@ -195,11 +195,10 @@ function isReviewableTurnState(
 const makeYoloReactor: Effect.Effect<
   YoloReactorShape,
   never,
-  Scope.Scope | OrchestrationEngineService | YoloEvaluator | ServerSettingsService
+  Scope.Scope | OrchestrationEngineService | YoloEvaluator
 > = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const evaluator = yield* YoloEvaluator;
-  const serverSettingsService = yield* ServerSettingsService;
   const currentIsoTime = Effect.sync(() => new Date().toISOString());
   const pendingReviewCount = yield* TxRef.make(0);
   const pendingReviewTasks = new Map<string, PendingReviewTask>();
@@ -347,7 +346,6 @@ const makeYoloReactor: Effect.Effect<
         thread,
         projects: readModel.projects,
       }) ?? process.cwd();
-    const settings = yield* serverSettingsService.getSettings;
     const iteration = run.iteration + 1;
     const latestAssistantText = latestAssistantTextForTurn(thread, input.turnId);
     const terminalProviderBlocker = detectYoloTerminalProviderBlocker(latestAssistantText);
@@ -371,7 +369,7 @@ const makeYoloReactor: Effect.Effect<
         checkpointSummary: checkpointSummary(thread, input.turnId),
         iteration,
         maxIterations: run.maxIterations,
-        modelSelection: settings.textGenerationModelSelection,
+        modelSelection: thread.modelSelection,
       })
       .pipe(
         Effect.catchCause((cause) =>

@@ -1,3 +1,4 @@
+// @effect-diagnostics importFromBarrel:off globalDate:off globalDateInEffect:off globalTimers:off globalErrorInEffectFailure:off
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -29,7 +30,7 @@ import {
 const projectId = ProjectId.make("project-yolo");
 
 type ReactorHarness = {
-  readonly runtime: ManagedRuntime.ManagedRuntime<YoloReactor, never>;
+  readonly runtime: ManagedRuntime.ManagedRuntime<YoloReactor, unknown>;
   readonly scope: Scope.Closeable;
   readonly publish: (event: OrchestrationEvent) => Promise<void>;
   readonly getCommands: () => Promise<ReadonlyArray<OrchestrationCommand>>;
@@ -56,6 +57,7 @@ function makeThread(input: {
   readonly startedAt: string;
   readonly completedAt: string;
   readonly triggerDelaySeconds: number;
+  readonly modelSelection?: OrchestrationThread["modelSelection"];
 }): OrchestrationThread {
   const assistantMessageId = MessageId.make(`assistant-${input.threadId}`);
 
@@ -63,7 +65,7 @@ function makeThread(input: {
     id: input.threadId,
     projectId,
     title: `Thread ${input.threadId}`,
-    modelSelection: {
+    modelSelection: input.modelSelection ?? {
       instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5-codex",
     },
@@ -428,5 +430,44 @@ describe("YoloReactor delayed review handling", () => {
     expect(Date.parse(reviewCommand.review.createdAt)).toBeGreaterThan(Date.parse(completedAt));
     expect(activityCommand.activity.createdAt).not.toBe(completedAt);
     expect(Date.parse(activityCommand.activity.createdAt)).toBeGreaterThan(Date.parse(completedAt));
+  });
+
+  it("reviews with the active thread provider and model instead of the global text-generation setting", async () => {
+    const startedAt = "2026-04-25T11:00:00.000Z";
+    const completedAt = "2026-04-25T11:10:00.000Z";
+    const threadId = ThreadId.make("thread-cursor-review");
+    const runId = YoloRunId.make("run-cursor-review");
+    const turnId = TurnId.make("turn-cursor-review");
+    const cursorModelSelection = {
+      instanceId: ProviderInstanceId.make("cursor"),
+      model: "composer-2",
+    };
+
+    harness = await createHarness({
+      readModel: {
+        snapshotSequence: 1,
+        projects: [makeProject(startedAt)],
+        threads: [
+          makeThread({
+            threadId,
+            runId,
+            turnId,
+            startedAt,
+            completedAt,
+            triggerDelaySeconds: 0,
+            modelSelection: cursorModelSelection,
+          }),
+        ],
+        scheduledJobs: [],
+        updatedAt: startedAt,
+      },
+    });
+
+    const evaluatorInputs = await waitFor(
+      harness.getEvaluatorInputs,
+      (entries) => entries.length === 1,
+    );
+
+    expect(evaluatorInputs[0]?.modelSelection).toEqual(cursorModelSelection);
   });
 });

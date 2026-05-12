@@ -1,3 +1,4 @@
+// @effect-diagnostics importFromBarrel:off globalDate:off globalDateInEffect:off globalTimers:off globalErrorInEffectFailure:off
 import * as Effect from "effect/Effect";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { describe, expect, it } from "vitest";

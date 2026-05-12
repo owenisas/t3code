@@ -41,11 +41,19 @@ function makeAcpAgentWrapper(dir: string, env: Record<string, string>): string {
     [
       "#!/bin/sh",
       ...Object.entries(env).map(([key, value]) => `export ${key}=${shellSingleQuote(value)}`),
-      'if [ "$1" != "acp" ]; then',
+      'if [ -n "$T3_ACP_ARGV_LOG_PATH" ]; then',
+      '  printf "%s\\n" "$*" >> "$T3_ACP_ARGV_LOG_PATH"',
+      "fi",
+      'if [ "$1" = "--model" ]; then',
+      '  if [ "$3" != "acp" ]; then',
+      '    printf "%s\\n" "unexpected args: $*" >&2',
+      "    exit 11",
+      "  fi",
+      'elif [ "$1" != "acp" ]; then',
       '  printf "%s\\n" "unexpected args: $*" >&2',
       "  exit 11",
       "fi",
-      `exec bun ${JSON.stringify(mockAgentPath)}`,
+      `exec bun ${JSON.stringify(mockAgentPath)} "$@"`,
       "",
     ].join("\n"),
     "utf8",
@@ -91,7 +99,55 @@ function waitForFileContent(path: string): Effect.Effect<string> {
 }
 
 it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
-  it.effect("uses ACP model config options instead of raw CLI model ids", () => {
+  it.effect("starts launch-only Cursor models with the selected model active", () => {
+    const requestLogDir = mkdtempSync(path.join(os.tmpdir(), "t3code-cursor-text-log-"));
+    const requestLogPath = path.join(requestLogDir, "requests.ndjson");
+    const argvLogPath = path.join(requestLogDir, "argv.log");
+
+    return withFakeAcpAgent(
+      {
+        T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        T3_ACP_ARGV_LOG_PATH: argvLogPath,
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+          subject: "Add generated commit message",
+          body: "- verify cursor acp model config path",
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/cursor-text-generation",
+            stagedSummary: "M apps/server/src/textGeneration/CursorTextGeneration.ts",
+            stagedPatch:
+              "diff --git a/apps/server/src/textGeneration/CursorTextGeneration.ts b/apps/server/src/textGeneration/CursorTextGeneration.ts",
+            modelSelection: {
+              ...createModelSelection(ProviderInstanceId.make("cursor"), "gpt-5.4", [
+                { id: "reasoning", value: "xhigh" },
+                { id: "fastMode", value: true },
+                { id: "contextWindow", value: "1m" },
+              ]),
+            },
+          });
+
+          expect(generated.subject).toBe("Add generated commit message");
+          expect(generated.body).toBe("- verify cursor acp model config path");
+          expect(readFileSync(argvLogPath, "utf8")).toContain("--model gpt-5.4-xhigh-fast acp");
+
+          const requests = readFileSync(requestLogPath, "utf8")
+            .trim()
+            .split("\n")
+            .filter((line) => line.length > 0)
+            .map((line) => JSON.parse(line) as { method?: string; params?: unknown });
+
+          expect(requests.some((request) => request.method === "session/set_config_option")).toBe(
+            false,
+          );
+        }),
+    );
+  });
+
+  it.effect("uses ACP model config options for switchable Cursor models", () => {
     const requestLogDir = mkdtempSync(path.join(os.tmpdir(), "t3code-cursor-text-log-"));
     const requestLogPath = path.join(requestLogDir, "requests.ndjson");
 
@@ -112,10 +168,8 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
             stagedPatch:
               "diff --git a/apps/server/src/textGeneration/CursorTextGeneration.ts b/apps/server/src/textGeneration/CursorTextGeneration.ts",
             modelSelection: {
-              ...createModelSelection(ProviderInstanceId.make("cursor"), "gpt-5.4", [
-                { id: "reasoning", value: "xhigh" },
+              ...createModelSelection(ProviderInstanceId.make("cursor"), "composer-2", [
                 { id: "fastMode", value: true },
-                { id: "contextWindow", value: "1m" },
               ]),
             },
           });
@@ -143,23 +197,7 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
               (request) =>
                 request.method === "session/set_config_option" &&
                 request.params?.configId === "model" &&
-                request.params?.value === "gpt-5.4",
-            ),
-          ).toBe(true);
-          expect(
-            requests.some(
-              (request) =>
-                request.method === "session/set_config_option" &&
-                request.params?.configId === "reasoning" &&
-                request.params?.value === "extra-high",
-            ),
-          ).toBe(true);
-          expect(
-            requests.some(
-              (request) =>
-                request.method === "session/set_config_option" &&
-                request.params?.configId === "context" &&
-                request.params?.value === "1m",
+                request.params?.value === "composer-2",
             ),
           ).toBe(true);
           expect(

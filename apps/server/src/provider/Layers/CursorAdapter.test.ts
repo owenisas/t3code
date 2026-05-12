@@ -523,6 +523,52 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       }),
   );
 
+  it.effect("restarts Cursor ACP when a launch-preset model option changes", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-launch-preset-restart");
+      const tempDir = yield* Effect.promise(() => mkdtemp(path.join(os.tmpdir(), "cursor-acp-")));
+      const requestLogPath = path.join(tempDir, "requests.ndjson");
+      const argvLogPath = path.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => writeFile(requestLogPath, "", "utf8"));
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath),
+      );
+      yield* serverSettings.updateSettings({
+        providers: { cursor: { binaryPath: wrapperPath } },
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "gpt-5.5", [
+          { id: "reasoning", value: "medium" },
+        ]),
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "use high reasoning",
+        attachments: [],
+        modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "gpt-5.5", [
+          { id: "reasoning", value: "high" },
+        ]),
+        interactionMode: "default",
+      });
+      yield* adapter.stopSession(threadId);
+
+      const argvRuns = yield* Effect.promise(() => readArgvLog(argvLogPath));
+      assert.deepStrictEqual(argvRuns[0], ["--model", "gpt-5.5-medium", "acp"]);
+      assert.deepStrictEqual(argvRuns[1], ["--model", "gpt-5.5-high", "acp"]);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.equal(requests.filter((entry) => entry.method === "session/prompt").length, 1);
+    }),
+  );
+
   it.effect(
     "streams ACP tool calls and approvals on the active turn in approval-required mode",
     () =>
@@ -1008,6 +1054,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       yield* adapter.stopSession(threadId);
     }),
   );
+
   it.effect("stopping a session settles pending approval waits", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;

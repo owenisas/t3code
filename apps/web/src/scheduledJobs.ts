@@ -125,6 +125,33 @@ export function buildScheduledJobCreateCommand(input: {
   };
 }
 
+export function buildScheduledJobUpdateCommand(input: {
+  jobId: ScheduledJobId;
+  title: string;
+  prompt: string;
+  modelSelection: ModelSelection;
+  runtimeMode: RuntimeMode;
+  interactionMode: ProviderInteractionMode;
+  intervalHours: number;
+  createdAt?: string;
+}) {
+  return {
+    type: "scheduled-job.update" as const,
+    commandId: newCommandId(),
+    jobId: input.jobId,
+    title: input.title.trim(),
+    prompt: input.prompt.trim(),
+    modelSelection: input.modelSelection,
+    runtimeMode: input.runtimeMode,
+    interactionMode: input.interactionMode,
+    schedule: {
+      type: "interval" as const,
+      intervalMinutes: input.intervalHours * 60,
+    },
+    createdAt: input.createdAt ?? new Date().toISOString(),
+  };
+}
+
 export function buildScheduledJobRunNowCommand(input: {
   jobId: ScheduledJobId;
   createdAt?: string;

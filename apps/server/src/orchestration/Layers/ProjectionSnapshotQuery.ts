@@ -548,10 +548,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          fork_source_thread_id AS "forkSourceThreadId",
+          fork_source_message_id AS "forkSourceMessageId",
+          fork_context_hydrated_at AS "forkContextHydratedAt",
+          yolo_run_json AS "yoloRun",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
+          starred_at AS "starredAt",
           latest_user_message_at AS "latestUserMessageAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
@@ -578,10 +583,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          fork_source_thread_id AS "forkSourceThreadId",
+          fork_source_message_id AS "forkSourceMessageId",
+          fork_context_hydrated_at AS "forkContextHydratedAt",
+          yolo_run_json AS "yoloRun",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
+          starred_at AS "starredAt",
           latest_user_message_at AS "latestUserMessageAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
@@ -1835,11 +1845,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 });
               }
 
+              const scheduledJobs = mapScheduledJobRows(scheduledJobRows, scheduledJobRunRows);
+
               return {
                 snapshotSequence: computeSnapshotSequence(stateRows),
                 projects,
                 threads,
-                scheduledJobs: mapScheduledJobRows(scheduledJobRows, scheduledJobRunRows),
+                scheduledJobs,
                 updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
               } satisfies OrchestrationReadModel;
             }),
@@ -2495,6 +2507,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+        forkOrigin:
+          threadRow.value.forkSourceThreadId != null && threadRow.value.forkSourceMessageId != null
+            ? {
+                sourceThreadId: threadRow.value.forkSourceThreadId,
+                sourceMessageId: threadRow.value.forkSourceMessageId,
+                hydratedAt: threadRow.value.forkContextHydratedAt,
+              }
+            : null,
         queuedFollowUps: queuedFollowUpRows.map((row) => {
           const followUp: OrchestrationQueuedFollowUp = {
             id: row.followUpId,

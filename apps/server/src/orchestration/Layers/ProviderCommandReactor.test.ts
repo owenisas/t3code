@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +18,8 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  ScheduledJobId,
+  ScheduledJobRunId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -470,6 +472,79 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
+  it("starts Cursor ACP turns for scheduled job runs with the job model selection", async () => {
+    const harness = await createHarness();
+    const createdAt = "2026-05-08T17:00:00.000Z";
+    const runAt = "2026-05-08T17:01:00.000Z";
+    const cursorSelection = createModelSelection(
+      ProviderInstanceId.make("cursor"),
+      "claude-opus-4-7",
+      [{ id: "fastMode", value: true }],
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "scheduled-job.create",
+        commandId: CommandId.make("cmd-scheduled-cursor-create"),
+        jobId: ScheduledJobId.make("job-cursor-acp"),
+        projectId: asProjectId("project-1"),
+        title: "Cursor scheduled audit",
+        prompt: "Audit the scheduler through Cursor ACP.",
+        modelSelection: cursorSelection,
+        runtimeMode: "full-access",
+        interactionMode: "plan",
+        schedule: {
+          type: "interval",
+          intervalMinutes: 60,
+        },
+        createdAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "scheduled-job.run.trigger",
+        commandId: CommandId.make("cmd-scheduled-cursor-run"),
+        jobId: ScheduledJobId.make("job-cursor-acp"),
+        runId: ScheduledJobRunId.make("run-cursor-acp"),
+        threadId: ThreadId.make("thread-scheduled-cursor"),
+        messageId: asMessageId("message-scheduled-cursor"),
+        trigger: "schedule",
+        createdAt: runAt,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      provider: ProviderDriverKind.make("cursor"),
+      providerInstanceId: ProviderInstanceId.make("cursor"),
+      cwd: "/tmp/provider-project",
+      modelSelection: cursorSelection,
+      runtimeMode: "full-access",
+    });
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.make("thread-scheduled-cursor"),
+      input: "Audit the scheduler through Cursor ACP.",
+      modelSelection: cursorSelection,
+      interactionMode: "plan",
+    });
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-scheduled-cursor"),
+    );
+    expect(thread?.modelSelection).toEqual(cursorSelection);
+    expect(thread?.runtimeMode).toBe("full-access");
+    expect(thread?.interactionMode).toBe("plan");
+    expect(thread?.session).toMatchObject({
+      providerName: ProviderDriverKind.make("cursor"),
+      providerInstanceId: ProviderInstanceId.make("cursor"),
+      runtimeMode: "full-access",
+    });
+  });
+
   it("sends the forked draft message directly when there is no earlier fork transcript", async () => {
     const harness = await createHarness();
     const sourceTurnAt = "2026-04-12T12:01:00.000Z";
@@ -504,7 +579,6 @@ describe("ProviderCommandReactor", () => {
         createdAt: forkedAt,
       }),
     );
-
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.turn.start",
@@ -537,6 +611,116 @@ describe("ProviderCommandReactor", () => {
       (entry) => entry.id === ThreadId.make("thread-fork"),
     );
     expect(forkedThread?.forkOrigin?.hydratedAt).toBeNull();
+  });
+
+  it("includes an assistant fork checkpoint when sending the first forked reply", async () => {
+    const harness = await createHarness();
+    const sourceTurnAt = "2026-04-12T12:01:00.000Z";
+    const assistantMessageAt = "2026-04-12T12:02:00.000Z";
+    const forkedAt = "2026-04-12T12:03:00.000Z";
+    const forkTurnAt = "2026-04-12T12:04:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-source-turn-start-question"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("message-source-user-1"),
+          role: "user",
+          text: "Resume the deploy fix from yesterday.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: sourceTurnAt,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.make("cmd-source-assistant-delta"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: asMessageId("message-source-assistant-1"),
+        turnId: asTurnId("turn-source-1"),
+        delta: "Should I resume on the failing deploy task?",
+        createdAt: assistantMessageAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.make("cmd-source-assistant-complete"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: asMessageId("message-source-assistant-1"),
+        turnId: asTurnId("turn-source-1"),
+        createdAt: assistantMessageAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-thread-fork-assistant-question"),
+        threadId: ThreadId.make("thread-fork-assistant"),
+        sourceThreadId: ThreadId.make("thread-1"),
+        sourceMessageId: asMessageId("message-source-assistant-1"),
+        createdAt: forkedAt,
+      }),
+    );
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const forkedThread = readModel.threads.find(
+        (entry) => entry.id === ThreadId.make("thread-fork-assistant"),
+      );
+      return forkedThread?.forkOrigin != null && forkedThread.messages.length === 2;
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-fork-assistant-turn-start"),
+        threadId: ThreadId.make("thread-fork-assistant"),
+        message: {
+          messageId: asMessageId("message-fork-user-1"),
+          role: "user",
+          text: "yes",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: forkTurnAt,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    const forkSendInput = harness.sendTurn.mock.calls[1]?.[0] as {
+      threadId: ThreadId;
+      input?: string;
+    };
+    expect(forkSendInput).toMatchObject({
+      threadId: ThreadId.make("thread-fork-assistant"),
+    });
+    expect(forkSendInput.input).toContain("Fork transcript:");
+    expect(forkSendInput.input).toContain(
+      "Assistant:\nShould I resume on the failing deploy task?",
+    );
+    expect(forkSendInput.input).toContain("New user message for this fork:\nyes");
+
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const forkedThread = readModel.threads.find(
+        (entry) => entry.id === ThreadId.make("thread-fork-assistant"),
+      );
+      return forkedThread?.forkOrigin?.hydratedAt === forkTurnAt;
+    });
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const forkedThread = readModel.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-fork-assistant"),
+    );
+    expect(forkedThread?.forkOrigin?.hydratedAt).toBe(forkTurnAt);
   });
 
   it("generates a thread title on the first turn", async () => {
@@ -1365,6 +1549,7 @@ describe("ProviderCommandReactor", () => {
           threadId: ThreadId.make("thread-1"),
           status: "ready",
           providerName: "claudeAgent",
+          providerInstanceId: ProviderInstanceId.make("codex"),
           runtimeMode: "full-access",
           activeTurnId: null,
           lastError: null,
@@ -1373,6 +1558,15 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
+    harness.runtimeSessions.push({
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId: ThreadId.make("thread-1"),
+      createdAt: now,
+      updatedAt: now,
+    });
 
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -1611,6 +1805,7 @@ describe("ProviderCommandReactor", () => {
           threadId: ThreadId.make("thread-1"),
           status: "running",
           providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
           runtimeMode: "approval-required",
           activeTurnId: asTurnId("turn-1"),
           lastError: null,
@@ -1619,6 +1814,15 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
+    harness.runtimeSessions.push({
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId: ThreadId.make("thread-1"),
+      createdAt: now,
+      updatedAt: now,
+    });
 
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -1634,6 +1838,51 @@ describe("ProviderCommandReactor", () => {
     expect(harness.interruptTurn.mock.calls[0]?.[0]).toEqual({
       threadId: "thread-1",
     });
+  });
+
+  it("marks interrupt failed when only projected session state exists", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-stale-interrupt"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-stale"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-1"),
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return (
+        thread?.session?.status === "ready" &&
+        thread.session.activeTurnId === null &&
+        thread.activities.some((activity) => activity.kind === "provider.turn.interrupt.failed")
+      );
+    });
+    expect(harness.interruptTurn).not.toHaveBeenCalled();
   });
 
   it("starts a fresh session when only projected session state exists", async () => {

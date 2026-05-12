@@ -453,6 +453,12 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const canForkFromMessage =
+    !row.message.streaming &&
+    ctx.canForkUserMessages &&
+    typeof ctx.onForkUserMessage === "function" &&
+    (ctx.forkableUserMessageIds?.has(row.message.id) ?? true);
+  const isForkingThisMessage = ctx.forkingMessageId === row.message.id;
 
   return (
     <>
@@ -468,6 +474,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           turnSummary={row.assistantTurnDiffSummary}
           routeThreadKey={ctx.routeThreadKey}
           resolvedTheme={ctx.resolvedTheme}
+          workspaceRoot={ctx.workspaceRoot}
           onOpenTurnDiff={ctx.onOpenTurnDiff}
         />
         <div className="mt-1.5 flex items-center gap-2">
@@ -487,6 +494,19 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             )}
           </p>
           <AssistantCopyButton row={row} />
+          {canForkFromMessage && (
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              disabled={isForkingThisMessage || ctx.forkingMessageId !== null}
+              onClick={() => ctx.onForkUserMessage?.(row.message.id)}
+              title="Fork a new thread from this response"
+              className="h-6 px-2 text-[10px] text-muted-foreground/60 opacity-0 transition-opacity duration-200 hover:text-foreground group-hover/assistant:opacity-100 focus-visible:opacity-100"
+            >
+              {isForkingThisMessage ? "Forking..." : "Fork"}
+            </Button>
+          )}
         </div>
       </div>
     </>

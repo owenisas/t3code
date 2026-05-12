@@ -353,6 +353,15 @@ type ChatViewProps =
       threadId: ThreadId;
       onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
+      paneId?: "primary" | "secondary";
+      isSplitPane?: boolean;
+      isFocusedPane?: boolean;
+      diffOpen?: boolean;
+      onTogglePaneDiff?: () => void;
+      onOpenSplit?: () => void;
+      onCloseSplitPane?: () => void;
+      onSwapSplitPane?: () => void;
+      onFocusPane?: () => void;
       routeKind: "server";
       draftId?: never;
     }
@@ -361,6 +370,15 @@ type ChatViewProps =
       threadId: ThreadId;
       onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
+      paneId?: "primary" | "secondary";
+      isSplitPane?: boolean;
+      isFocusedPane?: boolean;
+      diffOpen?: boolean;
+      onTogglePaneDiff?: () => void;
+      onOpenSplit?: () => void;
+      onCloseSplitPane?: () => void;
+      onSwapSplitPane?: () => void;
+      onFocusPane?: () => void;
       routeKind: "draft";
       draftId: DraftId;
     };
@@ -623,6 +641,15 @@ export default function ChatView(props: ChatViewProps) {
     routeKind,
     onDiffPanelOpen,
     reserveTitleBarControlInset = true,
+    paneId = "primary",
+    isSplitPane = false,
+    isFocusedPane = true,
+    diffOpen: controlledDiffOpen,
+    onTogglePaneDiff,
+    onOpenSplit,
+    onCloseSplitPane,
+    onSwapSplitPane,
+    onFocusPane,
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const routeThreadRef = useMemo(
@@ -841,7 +868,7 @@ export default function ChatView(props: ChatViewProps) {
   const composerMode: ComposerMode = composerYoloModeEnabled ? "yolo" : interactionMode;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
-  const diffOpen = rawSearch.diff === "1";
+  const diffOpen = controlledDiffOpen ?? rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadRef = useMemo(
     () => (activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null),
@@ -1344,14 +1371,14 @@ export default function ChatView(props: ChatViewProps) {
     ? respondingUserInputRequestIds.includes(activePendingUserInput.requestId)
     : false;
   const activeProposedPlan = useMemo(() => {
-    if (!latestTurnSettled) {
+    if (activeThreadHasRunningTurn) {
       return null;
     }
     return findLatestProposedPlan(
       activeThread?.proposedPlans ?? [],
       activeLatestTurn?.turnId ?? null,
     );
-  }, [activeLatestTurn?.turnId, activeThread?.proposedPlans, latestTurnSettled]);
+  }, [activeLatestTurn?.turnId, activeThread?.proposedPlans, activeThreadHasRunningTurn]);
   const sidebarProposedPlan = useMemo(
     () =>
       findSidebarProposedPlan({
@@ -1370,7 +1397,7 @@ export default function ChatView(props: ChatViewProps) {
   const showPlanFollowUpPrompt =
     pendingUserInputs.length === 0 &&
     interactionMode === "plan" &&
-    latestTurnSettled &&
+    !activeThreadHasRunningTurn &&
     hasActionableProposedPlan(activeProposedPlan);
   const activePendingApproval = pendingApprovals[0] ?? null;
   const {
@@ -1457,7 +1484,10 @@ export default function ChatView(props: ChatViewProps) {
     () =>
       new Set(
         (activeThread?.messages ?? [])
-          .filter((message) => message.role === "user")
+          .filter(
+            (message) =>
+              message.role === "user" || (message.role === "assistant" && !message.streaming),
+          )
           .map((message) => message.id),
       ),
     [activeThread?.messages],
@@ -1714,6 +1744,10 @@ export default function ChatView(props: ChatViewProps) {
     if (!isServerThread) {
       return;
     }
+    if (onTogglePaneDiff) {
+      onTogglePaneDiff();
+      return;
+    }
     if (!diffOpen) {
       onDiffPanelOpen?.();
     }
@@ -1729,7 +1763,15 @@ export default function ChatView(props: ChatViewProps) {
         return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
       },
     });
-  }, [diffOpen, environmentId, isServerThread, navigate, onDiffPanelOpen, threadId]);
+  }, [
+    diffOpen,
+    environmentId,
+    isServerThread,
+    navigate,
+    onDiffPanelOpen,
+    onTogglePaneDiff,
+    threadId,
+  ]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -2578,7 +2620,12 @@ export default function ChatView(props: ChatViewProps) {
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
-      if (!activeThreadId || useCommandPaletteStore.getState().open || event.defaultPrevented) {
+      if (
+        !activeThreadId ||
+        (isSplitPane && !isFocusedPane) ||
+        useCommandPaletteStore.getState().open ||
+        event.defaultPrevented
+      ) {
         return;
       }
       const shortcutContext = {
@@ -2658,6 +2705,8 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadId,
     closeTerminal,
     createNewTerminal,
+    isFocusedPane,
+    isSplitPane,
     setTerminalOpen,
     runProjectScript,
     splitTerminal,
@@ -3205,10 +3254,12 @@ export default function ChatView(props: ChatViewProps) {
   const onInterrupt = async () => {
     const api = readEnvironmentApi(environmentId);
     if (!api || !activeThread) return;
+    const activeTurnId = activeLatestTurn?.turnId ?? activeThread.session?.activeTurnId;
     await api.orchestration.dispatchCommand({
       type: "thread.turn.interrupt",
       commandId: newCommandId(),
       threadId: activeThread.id,
+      ...(activeTurnId !== undefined ? { turnId: activeTurnId } : {}),
       createdAt: new Date().toISOString(),
     });
   };
@@ -3790,7 +3841,10 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       const sourceMessage = activeThread.messages.find((message) => message.id === messageId);
-      if (!sourceMessage || sourceMessage.role !== "user") {
+      if (!sourceMessage || (sourceMessage.role !== "user" && sourceMessage.role !== "assistant")) {
+        return;
+      }
+      if (sourceMessage.role === "assistant" && sourceMessage.streaming) {
         return;
       }
 
@@ -3813,10 +3867,12 @@ export default function ChatView(props: ChatViewProps) {
         )
         .then(async () => {
           clearComposerDraftContent(nextThreadRef);
-          setComposerDraftPrompt(nextThreadRef, sourceMessage.text);
-          const clonedImages = await cloneUserMessageImagesForComposer(sourceMessage);
-          if (clonedImages.length > 0) {
-            addComposerDraftImages(nextThreadRef, clonedImages);
+          if (sourceMessage.role === "user") {
+            setComposerDraftPrompt(nextThreadRef, sourceMessage.text);
+            const clonedImages = await cloneUserMessageImagesForComposer(sourceMessage);
+            if (clonedImages.length > 0) {
+              addComposerDraftImages(nextThreadRef, clonedImages);
+            }
           }
         })
         .then(() =>
@@ -3828,6 +3884,11 @@ export default function ChatView(props: ChatViewProps) {
             },
           }),
         )
+        .then(() => {
+          if (sourceMessage.role === "assistant") {
+            scheduleComposerFocus();
+          }
+        })
         .catch((error: unknown) => {
           toastManager.add({
             type: "error",
@@ -3850,6 +3911,7 @@ export default function ChatView(props: ChatViewProps) {
       forkingMessageId,
       isServerThread,
       navigate,
+      scheduleComposerFocus,
       setComposerDraftPrompt,
     ],
   );
@@ -3897,7 +3959,18 @@ export default function ChatView(props: ChatViewProps) {
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+    <div
+      className={cn(
+        "flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background",
+        isSplitPane &&
+          (isFocusedPane
+            ? "ring-1 ring-primary/35 ring-inset"
+            : "ring-1 ring-border/45 ring-inset"),
+      )}
+      data-chat-pane={paneId}
+      data-chat-pane-focused={isFocusedPane ? "true" : "false"}
+      onPointerDownCapture={onFocusPane}
+    >
       {/* Top bar */}
       <header
         className={cn(
@@ -3931,6 +4004,14 @@ export default function ChatView(props: ChatViewProps) {
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
           diffOpen={diffOpen}
+          isSplitPane={isSplitPane}
+          isFocusedPane={isFocusedPane}
+          canOpenSplit={routeKind === "server"}
+          canCloseSplitPane={isSplitPane && paneId === "secondary"}
+          canSwapSplitPane={isSplitPane && paneId === "secondary"}
+          {...(onOpenSplit ? { onOpenSplit } : {})}
+          {...(onCloseSplitPane ? { onCloseSplitPane } : {})}
+          {...(onSwapSplitPane ? { onSwapSplitPane } : {})}
           onRunProjectScript={runProjectScript}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}

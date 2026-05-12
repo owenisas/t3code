@@ -11,6 +11,7 @@ import {
   type ModelSelection,
   type OpenCodeSettings,
 } from "@t3tools/contracts";
+import type { PermissionRuleset } from "@opencode-ai/sdk/v2";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
@@ -82,6 +83,31 @@ function getOpenCodeTextResponse(parts: ReadonlyArray<unknown> | undefined): str
     })
     .join("")
     .trim();
+}
+
+function openCodeTextGenerationPermissions(
+  operation:
+    | "generateCommitMessage"
+    | "generatePrContent"
+    | "generateBranchName"
+    | "generateThreadTitle"
+    | "generateYoloReview",
+): PermissionRuleset {
+  if (operation !== "generateYoloReview") {
+    return [{ permission: "*", pattern: "*", action: "deny" }];
+  }
+
+  return [
+    { permission: "websearch", pattern: "*", action: "allow" },
+    { permission: "webfetch", pattern: "*", action: "allow" },
+    { permission: "codesearch", pattern: "*", action: "allow" },
+    { permission: "question", pattern: "*", action: "allow" },
+    { permission: "bash", pattern: "*", action: "deny" },
+    { permission: "edit", pattern: "*", action: "deny" },
+    { permission: "external_directory", pattern: "*", action: "deny" },
+    { permission: "doom_loop", pattern: "*", action: "deny" },
+    { permission: "*", pattern: "*", action: "deny" },
+  ];
 }
 
 interface SharedOpenCodeTextGenerationServerState {
@@ -306,7 +332,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           });
           const session = await client.session.create({
             title: `T3 Code ${input.operation}`,
-            permission: [{ permission: "*", pattern: "*", action: "deny" }],
+            permission: openCodeTextGenerationPermissions(input.operation),
           });
           if (!session.data) {
             throw new Error("OpenCode session.create returned no session payload.");

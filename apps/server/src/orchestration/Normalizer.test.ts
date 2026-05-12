@@ -1,3 +1,4 @@
+// @effect-diagnostics importFromBarrel:off globalDate:off globalDateInEffect:off globalTimers:off globalErrorInEffectFailure:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,

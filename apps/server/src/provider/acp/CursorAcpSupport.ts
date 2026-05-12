@@ -102,7 +102,7 @@ export function applyCursorAcpModelSelection<E>(input: {
     if (
       isCursorAcpLaunchOnlyModel(baseModel) &&
       currentModel !== undefined &&
-      currentModel !== baseModel
+      resolveCursorAcpBaseModelId(currentModel) !== baseModel
     ) {
       return yield* Effect.fail(
         input.mapError({

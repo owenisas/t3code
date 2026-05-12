@@ -1,3 +1,4 @@
+// @effect-diagnostics importFromBarrel:off globalDate:off globalDateInEffect:off globalTimers:off globalErrorInEffectFailure:off
 import type { ScheduledJobSchedule } from "@t3tools/contracts";
 
 export function computeNextScheduledJobRunAt(

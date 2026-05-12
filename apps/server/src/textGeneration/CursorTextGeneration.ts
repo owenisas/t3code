@@ -30,6 +30,7 @@ import {
   applyCursorAcpModelSelection,
   makeCursorAcpRuntime,
 } from "../provider/acp/CursorAcpSupport.ts";
+import { resolveCursorAcpLaunchModelOverride } from "../provider/Layers/CursorProvider.ts";
 
 const CURSOR_TIMEOUT_MS = 180_000;
 
@@ -89,12 +90,31 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
       const outputRef = yield* Ref.make("");
+      const launchModelOverride = resolveCursorAcpLaunchModelOverride(
+        modelSelection.model,
+        modelSelection.options,
+      );
       const runtime = yield* makeCursorAcpRuntime({
         cursorSettings,
         environment,
         childProcessSpawner: commandSpawner,
         cwd,
+        ...(launchModelOverride ? { launchModelOverride } : {}),
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
+      });
+
+      yield* runtime.handleRequestPermission((params) => {
+        const kind = params.toolCall.kind;
+        const optionId =
+          kind === "read" || kind === "search" || kind === "fetch" || kind === "think"
+            ? "allow-once"
+            : "reject-once";
+        return Effect.succeed({
+          outcome: {
+            outcome: "selected" as const,
+            optionId,
+          },
+        });
       });
 
       yield* runtime.handleSessionUpdate((notification) => {

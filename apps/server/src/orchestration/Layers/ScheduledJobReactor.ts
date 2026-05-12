@@ -1,3 +1,4 @@
+// @effect-diagnostics importFromBarrel:off globalDate:off globalDateInEffect:off globalTimers:off globalErrorInEffectFailure:off
 import {
   CommandId,
   MessageId,
@@ -626,20 +627,29 @@ const makeScheduledJobReactor = Effect.gen(function* () {
     );
   });
 
-  const worker = yield* makeDrainableWorker((task: ScheduledJobTask) => {
-    switch (task.type) {
-      case "reconcile":
-        return reconcileActiveRuns();
-      case "scan":
-        return triggerDueJobs();
-      case "manifest-scan":
-        return scanJobManifests();
-      case "completion-event":
-        return handleCompletionEvent(task.event).pipe(Effect.andThen(scanJobManifests()));
-      case "manifest-write-back":
-        return handleManifestWriteBack(task.event);
-    }
-  });
+  const worker = yield* makeDrainableWorker((task: ScheduledJobTask) =>
+    (() => {
+      switch (task.type) {
+        case "reconcile":
+          return reconcileActiveRuns();
+        case "scan":
+          return triggerDueJobs();
+        case "manifest-scan":
+          return scanJobManifests();
+        case "completion-event":
+          return handleCompletionEvent(task.event).pipe(Effect.andThen(scanJobManifests()));
+        case "manifest-write-back":
+          return handleManifestWriteBack(task.event);
+      }
+    })().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("scheduled job reactor task failed", {
+          taskType: task.type,
+          cause,
+        }),
+      ),
+    ),
+  );
 
   const start: ScheduledJobReactorShape["start"] = Effect.fn("start")(function* () {
     yield* worker.enqueue({ type: "reconcile" });

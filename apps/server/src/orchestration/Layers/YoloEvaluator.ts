@@ -1,3 +1,4 @@
+// @effect-diagnostics importFromBarrel:off globalDate:off globalDateInEffect:off globalTimers:off globalErrorInEffectFailure:off
 import { Effect, Layer } from "effect";
 
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";

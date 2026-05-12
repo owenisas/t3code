@@ -5,6 +5,7 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildYoloReviewPrompt,
 } from "./TextGenerationPrompts.ts";
 import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { TextGenerationError } from "@t3tools/contracts";
@@ -133,6 +134,23 @@ describe("buildThreadTitlePrompt", () => {
     expect(result.prompt).toContain("thread.png");
     expect(result.prompt).toContain("image/png");
     expect(result.prompt).toContain("67890 bytes");
+  });
+});
+
+describe("buildYoloReviewPrompt", () => {
+  it("allows read-only research without allowing workspace mutation", () => {
+    const result = buildYoloReviewPrompt({
+      goal: "Ship the scheduler",
+      transcript: "User: Ship the scheduler.",
+      latestAssistantText: "Implemented scheduler UI.",
+      checkpointSummary: "M apps/web/src/components/JobsPage.tsx",
+      iteration: 2,
+      maxIterations: 10,
+    });
+
+    expect(result.prompt).toContain("You may do read-only research");
+    expect(result.prompt).toContain("search the web");
+    expect(result.prompt).toContain("Do not edit files, write files, run shell commands");
   });
 });
 
