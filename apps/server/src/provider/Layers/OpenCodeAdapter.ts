@@ -58,10 +58,19 @@ interface OpenCodeTurnSnapshot {
 }
 
 type OpenCodeSubscribedEvent =
-  Awaited<ReturnType<OpencodeClient["event"]["subscribe"]>> extends {
-    readonly stream: AsyncIterable<infer TEvent>;
+  Awaited<ReturnType<OpencodeClient["global"]["event"]>> extends {
+    readonly stream: AsyncIterable<infer TGlobalEvent>;
   }
-    ? TEvent
+    ? TGlobalEvent extends { readonly payload: infer TEvent }
+      ? TEvent
+      : never
+    : never;
+
+type OpenCodeGlobalSubscribedEvent =
+  Awaited<ReturnType<OpencodeClient["global"]["event"]>> extends {
+    readonly stream: AsyncIterable<infer TGlobalEvent>;
+  }
+    ? TGlobalEvent
     : never;
 
 interface OpenCodeSessionContext {
@@ -89,7 +98,7 @@ interface OpenCodeSessionContext {
   /**
    * Sole lifecycle handle for the session. Closing this scope:
    *   - aborts the `AbortController` registered as a finalizer
-   *     (cancels the in-flight `event.subscribe` fetch),
+   *     (cancels the in-flight `global.event` fetch),
    *   - interrupts the event-pump and server-exit fibers forked
    *     via `Effect.forkIn(sessionScope)`,
    *   - tears down the OpenCode server process for scope-owned servers.
@@ -436,7 +445,7 @@ const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
   }
 
   // Best-effort remote abort. The scope close below tears down the local
-  // handles (event-pump fiber, server-exit fiber, event-subscribe fetch),
+  // handles (event-pump fiber, server-exit fiber, global-event fetch),
   // but we still want to tell OpenCode that this session is done.
   yield* runOpenCodeSdk("session.abort", () =>
     context.client.session.abort({ sessionID: context.openCodeSessionId }),
@@ -630,6 +639,31 @@ export function makeOpenCodeAdapter(
           },
         });
       }
+    });
+
+    const completeActiveTurn = Effect.fn("completeActiveTurn")(function* (
+      context: OpenCodeSessionContext,
+      turnId: TurnId | undefined,
+      raw: unknown,
+    ) {
+      if (!turnId) {
+        return;
+      }
+      context.activeTurnId = undefined;
+      context.activeAgent = undefined;
+      context.activeVariant = undefined;
+      yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId,
+          raw,
+        })),
+        type: "turn.completed",
+        payload: {
+          state: "completed",
+        },
+      });
     });
 
     const handleSubscribedEvent = Effect.fn("handleSubscribedEvent")(function* (
@@ -888,20 +922,13 @@ export function makeOpenCodeAdapter(
           }
 
           if (event.properties.status.type === "idle" && turnId) {
-            context.activeTurnId = undefined;
-            yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
-            yield* emit({
-              ...(yield* buildEventBase({
-                threadId: context.session.threadId,
-                turnId,
-                raw: event,
-              })),
-              type: "turn.completed",
-              payload: {
-                state: "completed",
-              },
-            });
+            yield* completeActiveTurn(context, turnId, event);
           }
+          break;
+        }
+
+        case "session.idle": {
+          yield* completeActiveTurn(context, turnId, event);
           break;
         }
 
@@ -954,7 +981,7 @@ export function makeOpenCodeAdapter(
     const startEventPump = Effect.fn("startEventPump")(function* (context: OpenCodeSessionContext) {
       // One AbortController per session scope. The finalizer fires when
       // the scope closes (explicit stop, unexpected exit, or layer
-      // shutdown) and cancels the in-flight `event.subscribe` fetch so
+      // shutdown) and cancels the in-flight `global.event` fetch so
       // the async iterable unwinds cleanly.
       const eventsAbortController = new AbortController();
       yield* Scope.addFinalizer(
@@ -965,8 +992,8 @@ export function makeOpenCodeAdapter(
       // Fibers forked into `context.sessionScope` are interrupted
       // automatically when the scope closes — no bookkeeping required.
       yield* Effect.flatMap(
-        runOpenCodeSdk("event.subscribe", () =>
-          context.client.event.subscribe(undefined, {
+        runOpenCodeSdk("global.event", () =>
+          context.client.global.event({
             signal: eventsAbortController.signal,
           }),
         ),
@@ -975,11 +1002,17 @@ export function makeOpenCodeAdapter(
             subscription.stream,
             (cause) =>
               new OpenCodeRuntimeError({
-                operation: "event.subscribe",
+                operation: "global.event",
                 detail: openCodeRuntimeErrorDetail(cause),
                 cause,
               }),
-          ).pipe(Stream.runForEach((event) => handleSubscribedEvent(context, event))),
+          ).pipe(
+            Stream.filter(
+              (event: OpenCodeGlobalSubscribedEvent) => event.directory === context.directory,
+            ),
+            Stream.map((event: OpenCodeGlobalSubscribedEvent) => event.payload),
+            Stream.runForEach((event) => handleSubscribedEvent(context, event)),
+          ),
       ).pipe(
         Effect.exit,
         Effect.flatMap((exit) =>

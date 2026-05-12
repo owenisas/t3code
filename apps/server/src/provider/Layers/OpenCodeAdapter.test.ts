@@ -63,6 +63,8 @@ const runtimeMock = {
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
     subscribedEvents: [] as unknown[],
+    subscribedEventWaiters: [] as Array<() => void>,
+    keepEventStreamOpen: false,
   },
   reset() {
     this.state.startCalls.length = 0;
@@ -76,6 +78,22 @@ const runtimeMock = {
     this.state.closeError = null;
     this.state.messages = [];
     this.state.subscribedEvents = [];
+    this.state.subscribedEventWaiters = [];
+    this.state.keepEventStreamOpen = false;
+  },
+  pushSubscribedEvent(event: unknown) {
+    this.state.subscribedEvents.push(event);
+    const waiters = this.state.subscribedEventWaiters.splice(0);
+    for (const wake of waiters) {
+      wake();
+    }
+  },
+  closeSubscribedEventStream() {
+    this.state.keepEventStreamOpen = false;
+    const waiters = this.state.subscribedEventWaiters.splice(0);
+    for (const wake of waiters) {
+      wake();
+    }
   },
 };
 
@@ -158,11 +176,41 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
               : runtimeMock.state.messages;
         },
       },
-      event: {
-        subscribe: async () => ({
+      global: {
+        event: async (options?: { signal?: AbortSignal }) => ({
           stream: (async function* () {
-            for (const event of runtimeMock.state.subscribedEvents) {
-              yield event;
+            let index = 0;
+            while (true) {
+              while (index < runtimeMock.state.subscribedEvents.length) {
+                yield {
+                  directory: process.cwd(),
+                  payload: runtimeMock.state.subscribedEvents[index++],
+                };
+              }
+
+              if (!runtimeMock.state.keepEventStreamOpen || options?.signal?.aborted) {
+                return;
+              }
+
+              await new Promise<void>((resolve) => {
+                if (options?.signal?.aborted) {
+                  resolve();
+                  return;
+                }
+                const wake = () => {
+                  const waiterIndex = runtimeMock.state.subscribedEventWaiters.indexOf(wake);
+                  if (waiterIndex >= 0) {
+                    runtimeMock.state.subscribedEventWaiters.splice(waiterIndex, 1);
+                  }
+                  options?.signal?.removeEventListener("abort", wake);
+                  resolve();
+                };
+                runtimeMock.state.subscribedEventWaiters.push(wake);
+                options?.signal?.addEventListener("abort", wake, { once: true });
+                if (options?.signal?.aborted) {
+                  wake();
+                }
+              });
             }
           })(),
         }),
@@ -392,6 +440,53 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       assert.equal(sessions[0]?.status, "ready");
       assert.equal(sessions[0]?.activeTurnId, undefined);
       assert.equal(sessions[0]?.lastError, "prompt failed");
+    }),
+  );
+
+  it.effect("completes an active turn when OpenCode emits session.idle", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.keepEventStreamOpen = true;
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-session-idle-complete");
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(4),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Fix it",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+      runtimeMock.pushSubscribedEvent({
+        type: "session.idle",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+        },
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      runtimeMock.closeSubscribedEventStream();
+      assert.deepEqual(
+        events.map((event) => event.type),
+        ["session.started", "thread.started", "turn.started", "turn.completed"],
+      );
+      assert.equal(events.at(-1)?.turnId, turn.turnId);
+
+      const sessions = yield* adapter.listSessions();
+      const session = sessions.find((entry) => entry.threadId === threadId);
+      assert.equal(session?.status, "ready");
+      assert.equal(session?.activeTurnId, undefined);
     }),
   );
 
