@@ -12,6 +12,7 @@ import {
   type MessageId,
   type ThreadId,
   type TurnId,
+  type YoloRun,
 } from "@t3tools/contracts";
 
 import type {
@@ -178,6 +179,27 @@ export function deriveActiveWorkStartedAt(
     return latestTurn?.startedAt ?? sendStartedAt;
   }
   return sendStartedAt;
+}
+
+export function deriveVisibleYoloRun(
+  yoloRun: YoloRun | null | undefined,
+  latestTurn: Pick<OrchestrationLatestTurn, "requestedAt"> | null,
+): YoloRun | null {
+  if (!yoloRun) return null;
+  if (yoloRun.status === "active") return yoloRun;
+
+  const yoloUpdatedAt = Date.parse(yoloRun.updatedAt);
+  const latestRequestedAt = latestTurn?.requestedAt ? Date.parse(latestTurn.requestedAt) : NaN;
+
+  if (
+    Number.isFinite(yoloUpdatedAt) &&
+    Number.isFinite(latestRequestedAt) &&
+    latestRequestedAt > yoloUpdatedAt
+  ) {
+    return null;
+  }
+
+  return yoloRun;
 }
 
 function requestKindFromRequestType(requestType: unknown): PendingApproval["requestKind"] | null {

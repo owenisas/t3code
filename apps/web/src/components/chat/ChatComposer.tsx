@@ -109,6 +109,7 @@ import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelS
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
+import { deriveVisibleYoloRun } from "../../session-logic";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
 import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
@@ -793,6 +794,10 @@ export const ChatComposer = memo(
     const composerImages = composerDraft.images;
     const composerTerminalContexts = composerDraft.terminalContexts;
     const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
+    const visibleYoloRun = deriveVisibleYoloRun(
+      activeThread?.yoloRun ?? null,
+      activeThread?.latestTurn ?? null,
+    );
 
     const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
     const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
@@ -2524,23 +2529,23 @@ export const ChatComposer = memo(
                 onDelete={onDeleteQueuedFollowUp}
               />
 
-              {activeThread?.yoloRun ? (
+              {visibleYoloRun ? (
                 <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs">
                   <div className="min-w-0">
                     <div className="font-semibold text-amber-500">
-                      YOLO {activeThread.yoloRun.status}
-                      {activeThread.yoloRun.status === "active"
+                      YOLO {visibleYoloRun.status}
+                      {visibleYoloRun.status === "active"
                         ? ` · ${formatYoloRunLimit(
-                            activeThread.yoloRun.iteration,
-                            activeThread.yoloRun.maxIterations,
-                          )} · ${formatYoloTriggerDelay(activeThread.yoloRun.triggerDelaySeconds)}`
+                            visibleYoloRun.iteration,
+                            visibleYoloRun.maxIterations,
+                          )} · ${formatYoloTriggerDelay(visibleYoloRun.triggerDelaySeconds)}`
                         : ""}
                     </div>
                     <div className="truncate text-muted-foreground">
-                      {activeThread.yoloRun.lastReview?.reviewNote || activeThread.yoloRun.goal}
+                      {visibleYoloRun.lastReview?.reviewNote || visibleYoloRun.goal}
                     </div>
                   </div>
-                  {activeThread.yoloRun.status === "active" ? (
+                  {visibleYoloRun.status === "active" ? (
                     <Button type="button" size="xs" variant="outline" onClick={onStopYolo}>
                       Stop
                     </Button>

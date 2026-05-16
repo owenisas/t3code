@@ -292,6 +292,36 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
     });
 
+  const refreshSessionBindingFromRuntimeEvent = (event: ProviderRuntimeEvent) => {
+    if (event.type === "content.delta" || event.type === "thread.token-usage.updated") {
+      return Effect.void;
+    }
+
+    const runtimePayload: Record<string, unknown> = {
+      lastRuntimeEvent: event.type,
+      lastRuntimeEventAt: event.createdAt,
+    };
+    if (event.type === "turn.started" && event.turnId !== undefined) {
+      runtimePayload.activeTurnId = event.turnId;
+    } else if (
+      event.type === "turn.completed" ||
+      event.type === "turn.aborted" ||
+      event.type === "session.exited"
+    ) {
+      runtimePayload.activeTurnId = null;
+    }
+
+    return directory.upsert({
+      threadId: event.threadId,
+      provider: event.provider,
+      ...(event.providerInstanceId !== undefined
+        ? { providerInstanceId: event.providerInstanceId }
+        : {}),
+      status: event.type === "session.exited" ? "stopped" : "running",
+      runtimePayload,
+    });
+  };
+
   const processRuntimeEvent = (
     source: {
       readonly instanceId: ProviderInstanceId;
@@ -304,7 +334,21 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         increment(providerRuntimeEventsTotal, {
           provider: canonicalEvent.provider,
           eventType: canonicalEvent.type,
-        }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent))),
+        }).pipe(
+          Effect.andThen(
+            refreshSessionBindingFromRuntimeEvent(canonicalEvent).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("provider.runtime.binding-refresh-failed", {
+                  threadId: canonicalEvent.threadId,
+                  provider: canonicalEvent.provider,
+                  eventType: canonicalEvent.type,
+                  cause,
+                }),
+              ),
+            ),
+          ),
+          Effect.andThen(publishRuntimeEvent(canonicalEvent)),
+        ),
       ),
     );
 

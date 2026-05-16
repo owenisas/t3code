@@ -71,6 +71,34 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-acti
             .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
 
         yield* appendAndProject({
+          type: "thread.created",
+          eventId: EventId.make("evt-active-provider-turn-0"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: startedAt,
+          commandId: CommandId.make("cmd-active-provider-turn-0"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-active-provider-turn-0"),
+          metadata: {},
+          payload: {
+            threadId,
+            projectId: ProjectId.make("project-active-provider-turn"),
+            title: "Active provider thread",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("opencode"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            forkOrigin: null,
+            createdAt: startedAt,
+            updatedAt: startedAt,
+          },
+        });
+
+        yield* appendAndProject({
           type: "thread.session-set",
           eventId: EventId.make("evt-active-provider-turn-1"),
           aggregateKind: "thread",
@@ -163,6 +191,13 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-acti
         `;
         assert.equal(turnRows[0]?.state, "completed");
         assert.equal(turnRows[0]?.completedAt, turnCompletedAt);
+
+        const threadRows = yield* sql<{ readonly latestTurnId: string | null }>`
+          SELECT latest_turn_id AS "latestTurnId"
+          FROM projection_threads
+          WHERE thread_id = ${threadId}
+        `;
+        assert.equal(threadRows[0]?.latestTurnId, turnId);
       }),
     );
   },

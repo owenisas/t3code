@@ -1395,6 +1395,61 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("refreshes persisted runtime binding from provider lifecycle events", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+
+      const threadId = asThreadId("thread-runtime-event-refresh");
+      const session = yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* provider.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+      yield* advanceTestClock(50);
+
+      routing.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-runtime-event-refresh-completed"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:01:00.000Z",
+        threadId: session.threadId,
+        turnId: turn.turnId,
+        payload: {
+          state: "completed",
+          stopReason: "end_turn",
+        },
+      });
+      yield* advanceTestClock(50);
+
+      const refreshedRuntime = yield* runtimeRepository.getByThreadId({
+        threadId: session.threadId,
+      });
+      assert.equal(Option.isSome(refreshedRuntime), true);
+      if (Option.isSome(refreshedRuntime)) {
+        assert.equal(refreshedRuntime.value.status, "running");
+        const payload = refreshedRuntime.value.runtimePayload;
+        assert.equal(payload !== null && typeof payload === "object", true);
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          const runtimePayload = payload as {
+            activeTurnId: string | null;
+            lastRuntimeEvent: string | null;
+            lastRuntimeEventAt: string | null;
+          };
+          assert.equal(runtimePayload.lastRuntimeEvent, "turn.completed");
+          assert.equal(runtimePayload.lastRuntimeEventAt, "2026-01-01T00:01:00.000Z");
+          assert.equal(runtimePayload.activeTurnId, null);
+        }
+      }
+    }),
+  );
+
   it.effect("reuses persisted resume cursor when startSession is called after a restart", () =>
     Effect.gen(function* () {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-start-"));

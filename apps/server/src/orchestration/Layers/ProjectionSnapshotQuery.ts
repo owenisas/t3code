@@ -796,8 +796,17 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         FROM projection_threads threads
         JOIN projection_turns turns
           ON turns.thread_id = threads.thread_id
-          AND turns.turn_id = threads.latest_turn_id
-        WHERE threads.latest_turn_id IS NOT NULL
+          AND turns.turn_id = COALESCE(
+            threads.latest_turn_id,
+            (
+              SELECT candidate.turn_id
+              FROM projection_turns candidate
+              WHERE candidate.thread_id = threads.thread_id
+                AND candidate.turn_id IS NOT NULL
+              ORDER BY candidate.requested_at DESC, candidate.row_id DESC
+              LIMIT 1
+            )
+          )
         ORDER BY turns.thread_id ASC
       `,
   });
@@ -820,10 +829,19 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         FROM projection_threads threads
         JOIN projection_turns turns
           ON turns.thread_id = threads.thread_id
-          AND turns.turn_id = threads.latest_turn_id
+          AND turns.turn_id = COALESCE(
+            threads.latest_turn_id,
+            (
+              SELECT candidate.turn_id
+              FROM projection_turns candidate
+              WHERE candidate.thread_id = threads.thread_id
+                AND candidate.turn_id IS NOT NULL
+              ORDER BY candidate.requested_at DESC, candidate.row_id DESC
+              LIMIT 1
+            )
+          )
         WHERE threads.deleted_at IS NULL
           AND threads.archived_at IS NULL
-          AND threads.latest_turn_id IS NOT NULL
         ORDER BY turns.thread_id ASC
       `,
   });
@@ -846,10 +864,19 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         FROM projection_threads threads
         JOIN projection_turns turns
           ON turns.thread_id = threads.thread_id
-          AND turns.turn_id = threads.latest_turn_id
+          AND turns.turn_id = COALESCE(
+            threads.latest_turn_id,
+            (
+              SELECT candidate.turn_id
+              FROM projection_turns candidate
+              WHERE candidate.thread_id = threads.thread_id
+                AND candidate.turn_id IS NOT NULL
+              ORDER BY candidate.requested_at DESC, candidate.row_id DESC
+              LIMIT 1
+            )
+          )
         WHERE threads.deleted_at IS NULL
           AND threads.archived_at IS NOT NULL
-          AND threads.latest_turn_id IS NOT NULL
         ORDER BY turns.thread_id ASC
       `,
   });
@@ -1116,7 +1143,17 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         FROM projection_threads threads
         JOIN projection_turns turns
           ON turns.thread_id = threads.thread_id
-          AND turns.turn_id = threads.latest_turn_id
+          AND turns.turn_id = COALESCE(
+            threads.latest_turn_id,
+            (
+              SELECT candidate.turn_id
+              FROM projection_turns candidate
+              WHERE candidate.thread_id = threads.thread_id
+                AND candidate.turn_id IS NOT NULL
+              ORDER BY candidate.requested_at DESC, candidate.row_id DESC
+              LIMIT 1
+            )
+          )
         WHERE threads.thread_id = ${threadId}
           AND threads.deleted_at IS NULL
           AND threads.archived_at IS NULL

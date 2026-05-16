@@ -4,6 +4,8 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationThreadActivity,
+  YoloRunId,
+  type YoloRun,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -11,6 +13,7 @@ import {
   deriveCompletionDividerBeforeEntryId,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveVisibleYoloRun,
   derivePendingApprovals,
   derivePendingUserInputs,
   deriveRevertTurnCountByUserMessageId,
@@ -1708,5 +1711,53 @@ describe("deriveActiveWorkStartedAt", () => {
         "2026-02-27T21:11:00.000Z",
       ),
     ).toBe("2026-02-27T21:11:00.000Z");
+  });
+});
+
+describe("deriveVisibleYoloRun", () => {
+  const failedRun = {
+    id: YoloRunId.make("run-1"),
+    threadId: ThreadId.make("thread-1"),
+    goal: "Ship the fix",
+    status: "failed",
+    maxIterations: 10,
+    triggerDelaySeconds: 0,
+    iteration: 1,
+    lastReview: null,
+    reviews: [],
+    lastError: "Provider session ended with status 'stopped'.",
+    startedAt: "2026-02-27T21:00:00.000Z",
+    completedAt: "2026-02-27T21:10:06.000Z",
+    updatedAt: "2026-02-27T21:10:06.000Z",
+  } satisfies YoloRun;
+
+  it("keeps active runs visible", () => {
+    const activeRun: YoloRun = {
+      ...failedRun,
+      status: "active",
+      completedAt: null,
+      lastError: null,
+    };
+    expect(
+      deriveVisibleYoloRun(activeRun, {
+        requestedAt: "2026-02-27T21:20:00.000Z",
+      }),
+    ).toEqual(activeRun);
+  });
+
+  it("keeps inactive runs visible until a newer turn starts", () => {
+    expect(
+      deriveVisibleYoloRun(failedRun, {
+        requestedAt: "2026-02-27T21:09:00.000Z",
+      }),
+    ).toEqual(failedRun);
+  });
+
+  it("hides inactive runs after a newer turn starts", () => {
+    expect(
+      deriveVisibleYoloRun(failedRun, {
+        requestedAt: "2026-02-27T21:20:00.000Z",
+      }),
+    ).toBeNull();
   });
 });
