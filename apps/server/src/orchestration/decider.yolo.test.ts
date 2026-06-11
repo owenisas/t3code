@@ -108,8 +108,8 @@ async function createReadModelWithActiveYolo(now: string) {
   );
 }
 
-describe("decider YOLO interruption", () => {
-  it("stops active YOLO before a human turn starts", async () => {
+describe("decider Goal interruption", () => {
+  it("stops active Goal before a human turn starts", async () => {
     const now = new Date().toISOString();
     const readModel = await createReadModelWithActiveYolo(now);
 
@@ -149,7 +149,7 @@ describe("decider YOLO interruption", () => {
     });
   });
 
-  it("keeps active YOLO when the reviewer dispatches its own follow-up", async () => {
+  it("keeps active Goal when the reviewer dispatches its own follow-up", async () => {
     const now = new Date().toISOString();
     const readModel = await createReadModelWithActiveYolo(now);
 
@@ -162,7 +162,7 @@ describe("decider YOLO interruption", () => {
           message: {
             messageId: asMessageId("message-yolo"),
             role: "user",
-            text: "YOLO reviewer follow-up.",
+            text: "Goal reviewer follow-up.",
             attachments: [],
             origin: "yolo-reviewer",
           },

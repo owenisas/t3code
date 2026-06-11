@@ -347,7 +347,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
                 {props.composerMode === "plan"
                   ? "Plan"
                   : props.composerMode === "yolo"
-                    ? "YOLO"
+                    ? "Goal"
                     : "Build"}
               </SelectValue>
             </SelectTrigger>
@@ -370,7 +370,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
               </SelectItem>
               <SelectItem value="yolo" className="min-w-56 py-2">
                 <div className="grid min-w-0 gap-0.5">
-                  <span className="font-medium text-foreground">YOLO</span>
+                  <span className="font-medium text-foreground">Goal</span>
                   <span className="text-muted-foreground text-xs leading-4">
                     Keep reviewing and continuing toward the goal.
                   </span>
@@ -396,8 +396,8 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
               variant="ghost"
               size="sm"
               className="font-medium"
-              aria-label="YOLO iteration limit"
-              title="Maximum YOLO reviewer continuations"
+              aria-label="Goal iteration limit"
+              title="Maximum Goal reviewer continuations"
             >
               <SelectValue>{yoloIterationLabel(props.yoloIterationLimit)}</SelectValue>
             </SelectTrigger>
@@ -426,8 +426,8 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
               variant="ghost"
               size="sm"
               className="font-medium"
-              aria-label="YOLO review trigger delay"
-              title="How long YOLO waits after each worker turn before reviewing"
+              aria-label="Goal review trigger delay"
+              title="How long Goal waits after each worker turn before reviewing"
             >
               <SelectValue>{yoloTriggerDelayLabel(props.yoloTriggerDelaySeconds)}</SelectValue>
             </SelectTrigger>
@@ -2575,7 +2575,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs">
                 <div className="min-w-0">
                   <div className="font-semibold text-amber-500">
-                    YOLO {visibleYoloRun.status}
+                    Goal {visibleYoloRun.status}
                     {visibleYoloRun.status === "active"
                       ? ` · ${formatYoloRunLimit(
                           visibleYoloRun.iteration,
@@ -2625,7 +2625,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       : showPlanFollowUpPrompt && activeProposedPlan
                         ? "Add feedback to refine the plan, or leave this blank to implement it"
                         : composerMode === "yolo"
-                          ? "Enter the ultimate goal for YOLO mode"
+                          ? "Enter the goal to complete"
                           : environmentUnavailable
                             ? `${environmentUnavailable.label} is ${
                                 environmentUnavailable.connectionState === "connecting"

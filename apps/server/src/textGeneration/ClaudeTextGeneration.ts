@@ -113,7 +113,7 @@ function parsePlainYoloReviewResult(
     return Effect.fail(
       new TextGenerationError({
         operation: "generateYoloReview",
-        detail: "Claude YOLO fallback did not return a JSON object.",
+        detail: "Claude Goal fallback did not return a JSON object.",
       }),
     );
   }
@@ -123,7 +123,7 @@ function parsePlainYoloReviewResult(
       (cause) =>
         new TextGenerationError({
           operation: "generateYoloReview",
-          detail: "Claude YOLO fallback returned invalid JSON.",
+          detail: "Claude Goal fallback returned invalid JSON.",
           cause,
         }),
     ),
@@ -158,7 +158,7 @@ function normalizeYoloReviewStructuredOutput(
     return Effect.fail(
       new TextGenerationError({
         operation: "generateYoloReview",
-        detail: "Claude YOLO review returned non-object structured output.",
+        detail: "Claude Goal review returned non-object structured output.",
       }),
     );
   }
@@ -169,7 +169,7 @@ function normalizeYoloReviewStructuredOutput(
     return Effect.fail(
       new TextGenerationError({
         operation: "generateYoloReview",
-        detail: "Claude YOLO review returned missing or invalid goalReached.",
+        detail: "Claude Goal review returned missing or invalid goalReached.",
       }),
     );
   }

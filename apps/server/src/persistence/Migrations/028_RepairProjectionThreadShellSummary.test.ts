@@ -8,7 +8,7 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("034_RepairProjectionThreadShellSummary", (it) => {
+layer("036_RepairProjectionThreadShellSummary", (it) => {
   it.effect("repairs installs that skipped the original shell summary migrations", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -177,11 +177,11 @@ layer("034_RepairProjectionThreadShellSummary", (it) => {
           migration_id AS "migrationId",
           name
         FROM effect_sql_migrations
-        WHERE migration_id = 34
+        WHERE migration_id = 36
       `;
       assert.deepStrictEqual(migrationRows, [
         {
-          migrationId: 34,
+          migrationId: 36,
           name: "RepairProjectionThreadShellSummary",
         },
       ]);

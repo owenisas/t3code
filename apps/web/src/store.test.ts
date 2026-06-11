@@ -723,7 +723,7 @@ describe("store shell snapshot sync", () => {
 });
 
 describe("incremental orchestration updates", () => {
-  it("preserves YOLO run state through incremental updates", () => {
+  it("preserves Goal run state through incremental updates", () => {
     const thread = makeThread();
     const state = makeState(thread);
     const runId = YoloRunId.make("yolo-run-1");

@@ -1878,7 +1878,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
   );
 
   it.effect(
-    "hydrates queued follow-ups and YOLO state in the command read model after restart",
+    "hydrates queued follow-ups and Goal state in the command read model after restart",
     () =>
       Effect.gen(function* () {
         const snapshotQuery = yield* ProjectionSnapshotQuery;

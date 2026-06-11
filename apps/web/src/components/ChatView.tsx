@@ -3067,11 +3067,11 @@ export default function ChatView(props: ChatViewProps) {
     )
       return;
     if (options?.startYolo && activeThreadHasRunningTurn) {
-      setThreadError(activeThread.id, "Wait for the current turn to finish before starting YOLO.");
+      setThreadError(activeThread.id, "Wait for the current turn to finish before starting Goal.");
       return;
     }
     if (options?.startYolo && activeThread.yoloRun?.status === "active") {
-      setThreadError(activeThread.id, "This thread already has an active YOLO run.");
+      setThreadError(activeThread.id, "This thread already has an active Goal run.");
       return;
     }
     if (activePendingProgress) {
@@ -3146,7 +3146,7 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     if (options?.startYolo && trimmed.length === 0) {
-      setThreadError(activeThread.id, "Enter the YOLO ultimate goal in the composer first.");
+      setThreadError(activeThread.id, "Enter the goal in the composer first.");
       return;
     }
     if (!hasSendableContent) {
@@ -3411,7 +3411,7 @@ export default function ChatView(props: ChatViewProps) {
             commandId: newCommandId(),
             threadId: threadIdForSend,
             runId: yoloRunIdForSend,
-            reason: "Initial YOLO turn failed to start.",
+            reason: "Initial Goal turn failed to start.",
             createdAt: new Date().toISOString(),
           })
           .catch(() => undefined);

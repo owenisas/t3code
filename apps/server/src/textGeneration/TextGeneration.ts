@@ -132,7 +132,7 @@ export interface TextGenerationShape {
   ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
 
   /**
-   * Evaluate whether a YOLO run has reached its goal and produce the next instruction.
+   * Evaluate whether a Goal run has reached its goal and produce the next instruction.
    */
   readonly generateYoloReview: (
     input: YoloReviewGenerationInput,

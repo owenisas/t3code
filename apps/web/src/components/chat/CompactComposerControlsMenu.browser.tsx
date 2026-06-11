@@ -340,7 +340,7 @@ describe("CompactComposerControlsMenu", () => {
     host.remove();
   });
 
-  it("shows YOLO iteration choices when YOLO mode is selected", async () => {
+  it("shows Goal iteration choices when Goal mode is selected", async () => {
     await using _ = await mountMenu({
       composerMode: "yolo",
       yoloIterationLimit: null,
@@ -350,12 +350,12 @@ describe("CompactComposerControlsMenu", () => {
 
     await vi.waitFor(() => {
       const text = document.body.textContent ?? "";
-      expect(text).toContain("YOLO limit");
+      expect(text).toContain("Goal limit");
       expect(text).toContain("3 reviews");
       expect(text).toContain("10 reviews");
       expect(text).toContain("25 reviews");
       expect(text).toContain("Unlimited");
-      expect(text).toContain("YOLO review delay");
+      expect(text).toContain("Goal review delay");
       expect(text).toContain("Immediately");
       expect(text).toContain("30 sec");
     });

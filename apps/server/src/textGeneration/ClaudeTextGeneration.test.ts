@@ -411,7 +411,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
-  it.effect("runs YOLO reviews without bypassing Claude permissions", () =>
+  it.effect("runs Goal reviews without bypassing Claude permissions", () =>
     withFakeClaudeEnv(
       {
         output: JSON.stringify({
@@ -426,7 +426,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
         argsMustContain:
           "--permission-mode plan --tools Read,Grep,Glob,LS,WebSearch,WebFetch --allowedTools Read,Grep,Glob,LS,WebSearch,WebFetch",
         argsMustNotContain: "--dangerously-skip-permissions",
-        stdinMustContain: "You are T3 Code's YOLO reviewer agent.",
+        stdinMustContain: "You are T3 Code's Goal reviewer agent.",
       },
       (textGeneration) =>
         Effect.gen(function* () {
@@ -450,7 +450,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
-  it.effect("normalizes loosely typed Claude YOLO structured output", () =>
+  it.effect("normalizes loosely typed Claude Goal structured output", () =>
     withFakeClaudeEnv(
       {
         output: JSON.stringify({
@@ -489,7 +489,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
-  it.effect("falls back to plain JSON when Claude YOLO structured output retries fail", () =>
+  it.effect("falls back to plain JSON when Claude Goal structured output retries fail", () =>
     withFakeClaudeEnv(
       {
         output: "",

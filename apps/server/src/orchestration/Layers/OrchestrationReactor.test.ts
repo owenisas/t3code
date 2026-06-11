@@ -25,7 +25,7 @@ describe("OrchestrationReactor", () => {
     runtime = null;
   });
 
-  it("starts provider ingestion, provider command, checkpoint, scheduled job, thread deletion, YOLO, and agent awareness reactors", async () => {
+  it("starts provider ingestion, provider command, checkpoint, scheduled job, thread deletion, Goal, and agent awareness reactors", async () => {
     const started: string[] = [];
 
     runtime = ManagedRuntime.make(

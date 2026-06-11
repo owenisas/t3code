@@ -218,7 +218,7 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 }
 
 // ---------------------------------------------------------------------------
-// YOLO review
+// Goal review
 // ---------------------------------------------------------------------------
 
 export interface YoloReviewPromptInput {
@@ -232,7 +232,7 @@ export interface YoloReviewPromptInput {
 
 export function buildYoloReviewPrompt(input: YoloReviewPromptInput) {
   const prompt = [
-    "You are T3 Code's YOLO reviewer agent.",
+    "You are T3 Code's Goal reviewer agent.",
     "Your job is to judge whether the worker agent has fully reached the user's ultimate goal.",
     "Return a JSON object with keys: goalReached, confidence, missing, nextPrompt, reviewNote.",
     "Rules:",

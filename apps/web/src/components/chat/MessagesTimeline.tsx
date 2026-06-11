@@ -457,7 +457,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       <div className="relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary p-3">
         {isYoloReviewerMessage && (
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-500">
-            YOLO reviewer
+            Goal reviewer
           </div>
         )}
         {userImages.length > 0 && (

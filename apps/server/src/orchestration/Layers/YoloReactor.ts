@@ -58,7 +58,7 @@ function summarizeMessage(message: OrchestrationThread["messages"][number]): str
     message.role === "assistant"
       ? "Assistant"
       : message.origin === "yolo-reviewer"
-        ? "YOLO reviewer"
+        ? "Goal reviewer"
         : message.role === "system"
           ? "System"
           : "User";
@@ -169,7 +169,7 @@ function formatReviewerFollowUp(input: {
   readonly nextPrompt: string;
 }): string {
   return [
-    "YOLO reviewer follow-up.",
+    "Goal reviewer follow-up.",
     "",
     "Ultimate goal:",
     input.goal,
@@ -308,7 +308,7 @@ const makeYoloReactor: Effect.Effect<
       threadId: input.thread.id,
       tone: "error",
       kind: "yolo.review.failed",
-      summary: "YOLO review failed",
+      summary: "Goal review failed",
       detail: input.detail,
       turnId: input.turnId,
       createdAt: input.createdAt,
@@ -335,7 +335,7 @@ const makeYoloReactor: Effect.Effect<
       yield* completeWithFailure({
         thread,
         turnId: input.turnId,
-        detail: `YOLO stopped after reaching the ${run.maxIterations}-iteration limit.`,
+        detail: `Goal stopped after reaching the ${run.maxIterations}-iteration limit.`,
         createdAt,
       });
       return;
@@ -402,12 +402,12 @@ const makeYoloReactor: Effect.Effect<
     const reviewNote =
       result.reviewNote.trim() ||
       (reachedGoal
-        ? "YOLO reviewer: the ultimate goal appears complete."
-        : "YOLO reviewer: more work is needed.");
+        ? "Goal reviewer: the ultimate goal appears complete."
+        : "Goal reviewer: more work is needed.");
     const nextPrompt = result.nextPrompt.trim();
     const missing = result.missing.map((entry) => entry.trim()).filter(Boolean);
     const failureDetail = hitIterationLimit
-      ? `YOLO reached the ${activeRun.maxIterations}-iteration limit before the reviewer marked the goal complete.`
+      ? `Goal reached the ${activeRun.maxIterations}-iteration limit before the reviewer marked the goal complete.`
       : null;
     const reviewedAt = yield* currentIsoTime;
 
@@ -442,10 +442,10 @@ const makeYoloReactor: Effect.Effect<
           ? "yolo.iteration-limit"
           : "yolo.review.continue",
       summary: reachedGoal
-        ? "YOLO goal reached"
+        ? "Goal reached"
         : hitIterationLimit
-          ? "YOLO iteration limit reached"
-          : "YOLO reviewer requested follow-up",
+          ? "Goal iteration limit reached"
+          : "Goal reviewer requested follow-up",
       detail: failureDetail ? `${reviewNote}\n\n${failureDetail}` : reviewNote,
       turnId: input.turnId,
       createdAt: reviewedAt,
@@ -457,7 +457,7 @@ const makeYoloReactor: Effect.Effect<
       yield* completeWithFailure({
         thread: activeThread,
         turnId: input.turnId,
-        detail: "YOLO reviewer requested continuation but returned an empty next prompt.",
+        detail: "Goal reviewer requested continuation but returned an empty next prompt.",
         createdAt,
       });
       return;

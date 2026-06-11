@@ -1192,7 +1192,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       if (thread.yoloRun?.status === "active") {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
-          detail: `Thread '${command.threadId}' already has an active YOLO run.`,
+          detail: `Thread '${command.threadId}' already has an active Goal run.`,
         });
       }
       return {
@@ -1234,13 +1234,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       if (!activeRun) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
-          detail: `Thread '${command.threadId}' does not have an active YOLO run.`,
+          detail: `Thread '${command.threadId}' does not have an active Goal run.`,
         });
       }
       if (command.runId !== undefined && activeRun.id !== command.runId) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
-          detail: `YOLO run '${command.runId}' is not active on thread '${command.threadId}'.`,
+          detail: `Goal run '${command.runId}' is not active on thread '${command.threadId}'.`,
         });
       }
       return {
@@ -1293,7 +1293,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       if (!activeRun || activeRun.id !== command.review.runId) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
-          detail: `YOLO run '${command.review.runId}' is not active on thread '${command.threadId}'.`,
+          detail: `Goal run '${command.review.runId}' is not active on thread '${command.threadId}'.`,
         });
       }
       const status = command.completedStatus ?? activeRun.status;

@@ -62,13 +62,13 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             >
               <MenuRadioItem value="default">Build</MenuRadioItem>
               <MenuRadioItem value="plan">Plan</MenuRadioItem>
-              <MenuRadioItem value="yolo">YOLO</MenuRadioItem>
+              <MenuRadioItem value="yolo">Goal</MenuRadioItem>
             </MenuRadioGroup>
             {props.composerMode === "yolo" ? (
               <>
                 <MenuDivider />
                 <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
-                  YOLO limit
+                  Goal limit
                 </div>
                 <MenuRadioGroup
                   value={
@@ -90,7 +90,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
                 </MenuRadioGroup>
                 <MenuDivider />
                 <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
-                  YOLO review delay
+                  Goal review delay
                 </div>
                 <MenuRadioGroup
                   value={String(props.yoloTriggerDelaySeconds)}
