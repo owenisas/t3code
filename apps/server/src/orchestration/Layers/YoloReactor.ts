@@ -10,6 +10,7 @@ import {
   type YoloRunId,
   YoloReviewId,
 } from "@t3tools/contracts";
+import { randomUUID } from "node:crypto";
 import { Cause, Deferred, Duration, Effect, Fiber, Layer, Stream, TxRef } from "effect";
 import type { Scope } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -46,8 +47,7 @@ const MAX_MESSAGE_CHARS = 10_000;
 const reviewTaskKey = (input: { readonly runId: YoloRunId; readonly turnId: TurnId | null }) =>
   `${input.runId}:${input.turnId ?? "no-turn"}`;
 
-const serverCommandId = (tag: string): CommandId =>
-  CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
+const serverCommandId = (tag: string) => CommandId.make(`server:${tag}:${randomUUID()}`);
 
 function truncate(value: string, limit: number): string {
   return value.length > limit ? `${value.slice(0, limit)}\n...[truncated]` : value;
@@ -263,7 +263,7 @@ const makeYoloReactor: Effect.Effect<
       commandId: serverCommandId(`yolo-${input.kind}`),
       threadId: input.threadId,
       activity: {
-        id: EventId.make(crypto.randomUUID()),
+        id: EventId.make(randomUUID()),
         tone: input.tone,
         kind: input.kind,
         summary: input.summary,
@@ -288,7 +288,7 @@ const makeYoloReactor: Effect.Effect<
       commandId: serverCommandId("yolo-review-failed"),
       threadId: input.thread.id,
       review: {
-        id: YoloReviewId.make(crypto.randomUUID()),
+        id: YoloReviewId.make(randomUUID()),
         runId: run.id,
         threadId: input.thread.id,
         turnId: input.turnId,
@@ -416,7 +416,7 @@ const makeYoloReactor: Effect.Effect<
       commandId: serverCommandId("yolo-review-complete"),
       threadId: activeThread.id,
       review: {
-        id: YoloReviewId.make(crypto.randomUUID()),
+        id: YoloReviewId.make(randomUUID()),
         runId: activeRun.id,
         threadId: activeThread.id,
         turnId: input.turnId,
@@ -468,7 +468,7 @@ const makeYoloReactor: Effect.Effect<
       commandId: serverCommandId("yolo-follow-up-dispatch"),
       threadId: activeThread.id,
       message: {
-        messageId: MessageId.make(crypto.randomUUID()),
+        messageId: MessageId.make(randomUUID()),
         role: "user",
         text: formatReviewerFollowUp({
           goal: activeRun.goal,
@@ -633,7 +633,7 @@ const makeYoloReactor: Effect.Effect<
       yield* worker.enqueue({
         type: "thread.yolo-started",
         sequence: readModel.snapshotSequence,
-        eventId: EventId.make(`startup-yolo-${thread.id}-${crypto.randomUUID()}`),
+        eventId: EventId.make(`startup-yolo-${thread.id}-${randomUUID()}`),
         aggregateKind: "thread",
         aggregateId: thread.id,
         occurredAt: now,

@@ -118,15 +118,17 @@ function parsePlainYoloReviewResult(
     );
   }
 
-  return Effect.try({
-    try: () => JSON.parse(jsonText) as unknown,
-    catch: (cause) =>
-      new TextGenerationError({
-        operation: "generateYoloReview",
-        detail: "Claude YOLO fallback returned invalid JSON.",
-        cause,
-      }),
-  }).pipe(Effect.flatMap(normalizeYoloReviewStructuredOutput));
+  return decodeUnknownJsonString(jsonText).pipe(
+    Effect.mapError(
+      (cause) =>
+        new TextGenerationError({
+          operation: "generateYoloReview",
+          detail: "Claude YOLO fallback returned invalid JSON.",
+          cause,
+        }),
+    ),
+    Effect.flatMap(normalizeYoloReviewStructuredOutput),
+  );
 }
 
 function normalizeBoolean(value: unknown): boolean | null {
@@ -188,6 +190,7 @@ function normalizeYoloReviewStructuredOutput(
 }
 
 const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
+const decodeUnknownJsonString = Schema.decodeEffect(Schema.UnknownFromJsonString);
 const decodeClaudeOutputEnvelope = Schema.decodeEffect(Schema.fromJsonString(ClaudeOutputEnvelope));
 const decodeClaudePlainOutputEnvelope = Schema.decodeEffect(
   Schema.fromJsonString(ClaudePlainOutputEnvelope),
@@ -429,7 +432,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const findDescriptor = (id: string) => descriptors.find((descriptor) => descriptor.id === id);
     const rawEffortSelection = getModelSelectionStringOptionValue(modelSelection, "effort");
     const resolvedEffort = resolveClaudeEffort(caps, rawEffortSelection);
-    const cliEffort = normalizeClaudeCliEffort(resolvedEffort);
+    const cliEffort = normalizeClaudeCliEffort(resolvedEffort, modelSelection.model);
     const thinkingDescriptor = findDescriptor("thinking");
     const fastModeDescriptor = findDescriptor("fastMode");
     const thinking =

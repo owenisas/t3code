@@ -255,6 +255,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
         getCounts: () => Effect.die("unused"),
         getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
         getProjectShellById: () => Effect.die("unused"),
+        getScheduledJobById: () => Effect.die("unused"),
         getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
         getThreadCheckpointContext: () => Effect.succeed(Option.none()),
         getFullThreadDiffContext: () => Effect.succeed(Option.none()),
@@ -263,6 +264,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
       }),
       Effect.provideService(OrchestrationEngineService, {
         readEvents: () => Stream.empty,
+        getReadModel: () => Effect.die("unused"),
         dispatch: (command) =>
           Ref.update(dispatchCalls, (calls) => [...calls, command.type]).pipe(
             Effect.as({ sequence: 1 }),

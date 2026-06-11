@@ -42,6 +42,7 @@ import {
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
+const decodeV2TurnSteerParams = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnSteerParams);
 
 const PROVIDER = ProviderDriverKind.make("codex");
 
@@ -416,7 +417,7 @@ function buildTurnSteerParams(input: {
     turnInput.push(attachment);
   }
 
-  return Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnSteerParams)({
+  return decodeV2TurnSteerParams({
     threadId: input.threadId,
     expectedTurnId: input.expectedTurnId,
     input: turnInput,

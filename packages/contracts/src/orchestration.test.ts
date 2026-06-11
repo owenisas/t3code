@@ -406,7 +406,9 @@ it.effect("decodes thread.fork commands", () =>
       createdAt: "2026-01-01T00:00:00.000Z",
     });
 
-    assert.strictEqual(parsed.type, "thread.fork");
+    if (parsed.type !== "thread.fork") {
+      assert.fail(`Expected thread.fork command, received ${parsed.type}.`);
+    }
     assert.strictEqual(parsed.threadId, "thread-fork-1");
     assert.strictEqual(parsed.sourceThreadId, "thread-source-1");
     assert.strictEqual(parsed.sourceMessageId, "message-source-1");
@@ -477,7 +479,9 @@ it.effect("decodes thread fork-context-hydrated events", () =>
       },
     });
 
-    assert.strictEqual(hydrated.type, "thread.fork-context-hydrated");
+    if (hydrated.type !== "thread.fork-context-hydrated") {
+      assert.fail(`Expected thread.fork-context-hydrated event, received ${hydrated.type}.`);
+    }
     assert.strictEqual(hydrated.payload.hydratedAt, "2026-01-03T00:00:00.000Z");
   }),
 );

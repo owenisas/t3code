@@ -35,6 +35,7 @@ import { ProviderAdapterRequestError, ProviderValidationError } from "../../prov
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -276,6 +277,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
+  const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
@@ -418,7 +420,7 @@ const make = Effect.gen(function* () {
   }) {
     yield* orchestrationEngine.dispatch({
       type: "thread.follow-up.queue",
-      commandId: serverCommandId("thread-follow-up-queue"),
+      commandId: yield* serverCommandId("thread-follow-up-queue"),
       threadId: input.threadId,
       followUpId: input.followUpId,
       message: {
@@ -429,6 +431,38 @@ const make = Effect.gen(function* () {
       },
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       createdAt: input.createdAt,
+    });
+  });
+
+  const rejectStartedThreadModelChangeIfRequired = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly currentModelSelection: ModelSelection;
+    readonly requestedModelSelection: ModelSelection | undefined;
+  }) {
+    const requestedModelSelection = input.requestedModelSelection;
+    if (
+      requestedModelSelection === undefined ||
+      (input.currentModelSelection.instanceId === requestedModelSelection.instanceId &&
+        input.currentModelSelection.model === requestedModelSelection.model)
+    ) {
+      return;
+    }
+    const providers = yield* providerRegistry.getProviders;
+    const requiresNewThread =
+      providers.find((snapshot) => snapshot.instanceId === input.currentModelSelection.instanceId)
+        ?.requiresNewThreadForModelChange === true ||
+      providers.find((snapshot) => snapshot.instanceId === requestedModelSelection.instanceId)
+        ?.requiresNewThreadForModelChange === true;
+    if (!requiresNewThread) {
+      return;
+    }
+    return yield* new ProviderAdapterRequestError({
+      provider: providerErrorLabelFromInstanceHint({
+        instanceId: String(requestedModelSelection.instanceId),
+        modelSelectionInstanceId: String(input.currentModelSelection.instanceId),
+      }),
+      method: "thread.turn.start",
+      detail: `Thread '${input.threadId}' cannot switch models after the conversation has started. Start a new thread to use '${requestedModelSelection.model}'.`,
     });
   });
 
@@ -511,6 +545,20 @@ const make = Effect.gen(function* () {
       });
     }
     const preferredProvider: ProviderDriverKind = desiredDriverKind;
+    if (thread.session !== null) {
+      yield* rejectStartedThreadModelChangeIfRequired({
+        threadId,
+        currentModelSelection:
+          activeSession?.model !== undefined
+            ? {
+                ...thread.modelSelection,
+                instanceId: currentInstanceId,
+                model: activeSession.model,
+              }
+            : thread.modelSelection,
+        requestedModelSelection,
+      });
+    }
     if (
       thread.session !== null &&
       requestedModelSelection !== undefined &&
@@ -728,7 +776,7 @@ const make = Effect.gen(function* () {
     }
     yield* orchestrationEngine.dispatch({
       type: "thread.turn.start",
-      commandId: serverCommandId("thread-follow-up-dispatch"),
+      commandId: yield* serverCommandId("thread-follow-up-dispatch"),
       threadId: input.threadId,
       message: {
         messageId: nextFollowUp.messageId,
@@ -997,7 +1045,7 @@ const make = Effect.gen(function* () {
     if (forkTranscript !== null) {
       yield* orchestrationEngine.dispatch({
         type: "thread.fork-context.hydrate",
-        commandId: serverCommandId("thread-fork-context-hydrate"),
+        commandId: yield* serverCommandId("thread-fork-context-hydrate"),
         threadId: event.payload.threadId,
         hydratedAt: event.payload.createdAt,
       });

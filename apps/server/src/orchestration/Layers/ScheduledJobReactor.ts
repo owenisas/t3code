@@ -11,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { Duration, Effect, FileSystem, Layer, Path, Stream } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
@@ -56,8 +56,7 @@ type ScheduledJobTask =
 const POLL_INTERVAL = Duration.seconds(30);
 const MANIFEST_COMMAND_PREFIX = "server:job-manifest:";
 
-const serverCommandId = (tag: string): CommandId =>
-  CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
+const serverCommandId = (tag: string) => CommandId.make(`server:${tag}:${randomUUID()}`);
 
 const manifestCommandId = (tag: string, projectId: string, localId: string, fingerprint: string) =>
   CommandId.make(`server:job-manifest:${tag}:${projectId}:${localId}:${fingerprint}`);
@@ -238,9 +237,9 @@ const makeScheduledJobReactor = Effect.gen(function* () {
           type: "scheduled-job.run.trigger",
           commandId: serverCommandId("scheduled-job-run-trigger"),
           jobId: job.id,
-          runId: ScheduledJobRunId.make(crypto.randomUUID()),
-          threadId: ThreadId.make(crypto.randomUUID()),
-          messageId: MessageId.make(crypto.randomUUID()),
+          runId: ScheduledJobRunId.make(randomUUID()),
+          threadId: ThreadId.make(randomUUID()),
+          messageId: MessageId.make(randomUUID()),
           trigger: "schedule",
           createdAt: nowIso,
         })

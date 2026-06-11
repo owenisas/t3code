@@ -43,15 +43,18 @@ import Migration0027 from "./Migrations/027_ProviderSessionRuntimeInstanceId.ts"
 import Migration0028 from "./Migrations/028_ProjectionThreadSessionInstanceId.ts";
 import Migration0029 from "./Migrations/029_ProjectionThreadDetailOrderingIndexes.ts";
 import Migration0030 from "./Migrations/030_ProjectionThreadShellArchiveIndexes.ts";
-import Migration0031 from "./Migrations/025_ProjectionThreadQueuedFollowUps.ts";
-import Migration0032 from "./Migrations/026_ProjectionScheduledJobs.ts";
-import Migration0033 from "./Migrations/027_ProjectionThreadForkOrigin.ts";
-import Migration0034 from "./Migrations/028_RepairProjectionThreadShellSummary.ts";
-import Migration0035 from "./Migrations/029_RepairProjectionPendingApprovals.ts";
-import Migration0036 from "./Migrations/031_ProjectionThreadYolo.ts";
-import Migration0037 from "./Migrations/033_ProjectionThreadQueuedFollowUpInteractionMode.ts";
-import Migration0038 from "./Migrations/034_ProjectionThreadsStarredAt.ts";
-import Migration0039 from "./Migrations/035_RepairCursorAssistantSegmentMessageIds.ts";
+import Migration0031 from "./Migrations/031_AuthAuthorizationScopes.ts";
+import Migration0032 from "./Migrations/032_AuthPairingProofKeyThumbprint.ts";
+import Migration0033 from "./Migrations/025_ProjectionThreadQueuedFollowUps.ts";
+import Migration0034 from "./Migrations/026_ProjectionScheduledJobs.ts";
+import Migration0035 from "./Migrations/027_ProjectionThreadForkOrigin.ts";
+import Migration0036 from "./Migrations/028_RepairProjectionThreadShellSummary.ts";
+import Migration0037 from "./Migrations/029_RepairProjectionPendingApprovals.ts";
+import Migration0038 from "./Migrations/031_ProjectionThreadYolo.ts";
+import Migration0039 from "./Migrations/033_ProjectionThreadQueuedFollowUpInteractionMode.ts";
+import Migration0040 from "./Migrations/034_ProjectionThreadsStarredAt.ts";
+import Migration0041 from "./Migrations/035_RepairCursorAssistantSegmentMessageIds.ts";
+import Migration0042 from "./Migrations/040_RepairAuthAuthorizationScopeColumns.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -94,15 +97,18 @@ export const migrationEntries = [
   [28, "ProjectionThreadSessionInstanceId", Migration0028],
   [29, "ProjectionThreadDetailOrderingIndexes", Migration0029],
   [30, "ProjectionThreadShellArchiveIndexes", Migration0030],
-  [31, "ProjectionThreadQueuedFollowUps", Migration0031],
-  [32, "ProjectionScheduledJobs", Migration0032],
-  [33, "ProjectionThreadForkOrigin", Migration0033],
-  [34, "RepairProjectionThreadShellSummary", Migration0034],
-  [35, "RepairProjectionPendingApprovals", Migration0035],
-  [36, "ProjectionThreadYolo", Migration0036],
-  [37, "ProjectionThreadQueuedFollowUpInteractionMode", Migration0037],
-  [38, "ProjectionThreadsStarredAt", Migration0038],
-  [39, "RepairCursorAssistantSegmentMessageIds", Migration0039],
+  [31, "AuthAuthorizationScopes", Migration0031],
+  [32, "AuthPairingProofKeyThumbprint", Migration0032],
+  [33, "ProjectionThreadQueuedFollowUps", Migration0033],
+  [34, "ProjectionScheduledJobs", Migration0034],
+  [35, "ProjectionThreadForkOrigin", Migration0035],
+  [36, "RepairProjectionThreadShellSummary", Migration0036],
+  [37, "RepairProjectionPendingApprovals", Migration0037],
+  [38, "ProjectionThreadYolo", Migration0038],
+  [39, "ProjectionThreadQueuedFollowUpInteractionMode", Migration0039],
+  [40, "ProjectionThreadsStarredAt", Migration0040],
+  [41, "RepairCursorAssistantSegmentMessageIds", Migration0041],
+  [42, "RepairAuthAuthorizationScopeColumns", Migration0042],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

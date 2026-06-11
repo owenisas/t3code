@@ -14,6 +14,7 @@ import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
 import { ThreadDeletionReactorLive } from "./ThreadDeletionReactor.ts";
 import { YoloReactor } from "../Services/YoloReactor.ts";
 import { YoloReactorLive } from "./YoloReactor.ts";
+import * as AgentAwarenessRelay from "../../relay/AgentAwarenessRelay.ts";
 
 export const makeOrchestrationReactor = Effect.gen(function* () {
   const providerRuntimeIngestion = yield* ProviderRuntimeIngestionService;
@@ -22,6 +23,7 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
   const scheduledJobReactor = yield* ScheduledJobReactor;
   const threadDeletionReactor = yield* ThreadDeletionReactor;
   const yoloReactor = yield* YoloReactor;
+  const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
 
   const start: OrchestrationReactorShape["start"] = Effect.fn("start")(function* () {
     yield* providerRuntimeIngestion.start();
@@ -30,6 +32,7 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
     yield* scheduledJobReactor.start();
     yield* threadDeletionReactor.start();
     yield* yoloReactor.start();
+    yield* agentAwarenessRelay.start();
   });
 
   return {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import {
   DEFAULT_MODEL,
   ProviderDriverKind,
@@ -76,6 +76,8 @@ describe("normalizeModelSlug", () => {
     const cursor = ProviderDriverKind.make("cursor");
     expect(normalizeModelSlug("gpt-5-codex")).toBe("gpt-5.4");
     expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
+    expect(normalizeModelSlug("opus", claude)).toBe("claude-opus-4-8");
+    expect(normalizeModelSlug("opus-4.8", claude)).toBe("claude-opus-4-8");
     expect(normalizeModelSlug("sonnet", claude)).toBe("claude-sonnet-4-6");
     expect(normalizeModelSlug("auto", cursor)).toBe("default");
     expect(normalizeModelSlug("gpt-5.5-high", cursor)).toBe("gpt-5.5");
@@ -102,6 +104,9 @@ describe("resolveModelSlugForProvider", () => {
     );
     expect(resolveModelSlugForProvider(ProviderDriverKind.make("ollama"), undefined)).toBe(
       DEFAULT_MODEL,
+    );
+    expect(resolveModelSlugForProvider(ProviderDriverKind.make("grok"), undefined)).toBe(
+      "grok-build",
     );
   });
 

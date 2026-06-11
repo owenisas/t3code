@@ -90,6 +90,7 @@ const ACP_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "impleme
 const ACP_APPROVAL_MODE_ALIASES = ["ask"];
 const DEFAULT_CURSOR_INTERRUPT_CANCEL_TIMEOUT_MS = 1_500;
 const DEFAULT_CURSOR_INTERRUPT_FORCE_STOP_GRACE_MS = 1_500;
+const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
@@ -140,6 +141,10 @@ interface CursorSessionContext {
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
+  /** Number of sendTurn prompts currently in flight or being prepared.
+   * >0 means a turn is actively running, so a new sendTurn is a steer that
+   * continues it, and only the last remaining prompt settles the turn. */
+  promptsInFlight: number;
   stopped: boolean;
 }
 
@@ -476,7 +481,7 @@ export function makeCursorAdapter(
             {
               observedAt,
               event: {
-                id: crypto.randomUUID(),
+                id: yield* randomUUIDv4,
                 kind: "diagnostic",
                 provider: PROVIDER,
                 createdAt: observedAt,
@@ -882,6 +887,7 @@ export function makeCursorAdapter(
             turns: [],
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
+            promptsInFlight: 0,
             stopped: false,
           };
 
@@ -1045,192 +1051,226 @@ export function makeCursorAdapter(
           });
           ctx = yield* requireSession(input.threadId);
         }
-        const turnId = TurnId.make(yield* randomUUIDv4);
-        const resolvedModel = resolveCursorAcpBaseModelId(model);
-        yield* logDiagnostic({
-          threadId: input.threadId,
-          name: "turn.configuring",
-          payload: {
-            requestedModel: model ?? null,
-            resolvedModel,
+        // A sendTurn while a prompt is in flight is a steer: the agent folds
+        // the new prompt into the ongoing work, so the active turn id is
+        // reused instead of opening a new turn.
+        const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
+        const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
+        // Count this prompt immediately so a superseded in-flight prompt
+        // resolving from here on does not settle the turn; the matching
+        // decrement is the `ensuring` below.
+        ctx.promptsInFlight += 1;
+
+        return yield* Effect.gen(function* () {
+          const resolvedModel = resolveCursorAcpBaseModelId(model);
+          yield* logDiagnostic({
+            threadId: input.threadId,
+            name: "turn.configuring",
+            payload: {
+              requestedModel: model ?? null,
+              resolvedModel,
+              runtimeMode: ctx.session.runtimeMode,
+              interactionMode: input.interactionMode ?? null,
+              optionCount: turnModelSelection?.options?.length ?? 0,
+              steering: steeringTurnId !== undefined,
+            },
+          });
+          yield* applyRequestedSessionConfiguration({
+            runtime: ctx.acp,
             runtimeMode: ctx.session.runtimeMode,
-            interactionMode: input.interactionMode ?? null,
-            optionCount: turnModelSelection?.options?.length ?? 0,
-          },
-        });
-        yield* applyRequestedSessionConfiguration({
-          runtime: ctx.acp,
-          runtimeMode: ctx.session.runtimeMode,
-          interactionMode: input.interactionMode,
-          modelSelection:
-            model === undefined
-              ? undefined
-              : {
-                  model,
-                  options: turnModelSelection?.options,
-                },
-          mapError: ({ cause, method }) =>
-            mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
-        });
-        ctx.activeTurnId = turnId;
-        ctx.lastPlanFingerprint = undefined;
-        ctx.session = {
-          ...ctx.session,
-          activeTurnId: turnId,
-          updatedAt: yield* nowIso,
-        };
+            interactionMode: input.interactionMode,
+            modelSelection:
+              model === undefined
+                ? undefined
+                : {
+                    model,
+                    options: turnModelSelection?.options,
+                  },
+            mapError: ({ cause, method }) =>
+              mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
+          });
+          ctx.activeTurnId = turnId;
+          if (steeringTurnId === undefined) {
+            ctx.lastPlanFingerprint = undefined;
+          }
+          ctx.session = {
+            ...ctx.session,
+            activeTurnId: turnId,
+            updatedAt: yield* nowIso,
+          };
 
-        yield* offerRuntimeEvent({
-          type: "turn.started",
-          ...(yield* makeEventStamp()),
-          provider: PROVIDER,
-          threadId: input.threadId,
-          turnId,
-          payload: { model: resolvedModel },
-        });
-
-        const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
-        if (input.input?.trim()) {
-          promptParts.push({ type: "text", text: input.input.trim() });
-        }
-        if (input.attachments && input.attachments.length > 0) {
-          for (const attachment of input.attachments) {
-            const attachmentPath = resolveAttachmentPath({
-              attachmentsDir: serverConfig.attachmentsDir,
-              attachment,
-            });
-            if (!attachmentPath) {
-              return yield* new ProviderAdapterRequestError({
-                provider: PROVIDER,
-                method: "session/prompt",
-                detail: `Invalid attachment id '${attachment.id}'.`,
-              });
-            }
-            const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapterRequestError({
-                    provider: PROVIDER,
-                    method: "session/prompt",
-                    detail: cause.message,
-                    cause,
-                  }),
-              ),
-            );
-            promptParts.push({
-              type: "image",
-              data: Buffer.from(bytes).toString("base64"),
-              mimeType: attachment.mimeType,
+          if (steeringTurnId === undefined) {
+            yield* offerRuntimeEvent({
+              type: "turn.started",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: input.threadId,
+              turnId,
+              payload: { model: resolvedModel },
             });
           }
-        }
 
-        if (promptParts.length === 0) {
-          return yield* new ProviderAdapterValidationError({
-            provider: PROVIDER,
-            operation: "sendTurn",
-            issue: "Turn requires non-empty text or attachments.",
+          const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
+          if (input.input?.trim()) {
+            promptParts.push({ type: "text", text: input.input.trim() });
+          }
+          if (input.attachments && input.attachments.length > 0) {
+            for (const attachment of input.attachments) {
+              const attachmentPath = resolveAttachmentPath({
+                attachmentsDir: serverConfig.attachmentsDir,
+                attachment,
+              });
+              if (!attachmentPath) {
+                return yield* new ProviderAdapterRequestError({
+                  provider: PROVIDER,
+                  method: "session/prompt",
+                  detail: `Invalid attachment id '${attachment.id}'.`,
+                });
+              }
+              const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterRequestError({
+                      provider: PROVIDER,
+                      method: "session/prompt",
+                      detail: cause.message,
+                      cause,
+                    }),
+                ),
+              );
+              promptParts.push({
+                type: "image",
+                data: Buffer.from(bytes).toString("base64"),
+                mimeType: attachment.mimeType,
+              });
+            }
+          }
+
+          if (promptParts.length === 0) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "sendTurn",
+              issue: "Turn requires non-empty text or attachments.",
+            });
+          }
+
+          const promptStartedAtMs = Date.now();
+          const promptSummary = summarizePromptParts(promptParts);
+          yield* logDiagnostic({
+            threadId: input.threadId,
+            name: "turn.prompt.started",
+            payload: {
+              turnId,
+              model: resolvedModel,
+              promptParts: promptSummary,
+              steering: steeringTurnId !== undefined,
+            },
           });
-        }
+          const pendingPromptLogFiber = yield* Effect.gen(function* () {
+            yield* Effect.sleep("30 seconds");
+            yield* logDiagnostic({
+              threadId: input.threadId,
+              name: "turn.prompt.pending",
+              level: "warning",
+              payload: {
+                turnId,
+                elapsedMs: Date.now() - promptStartedAtMs,
+                model: resolvedModel,
+              },
+            });
+            yield* Effect.sleep("90 seconds");
+            yield* logDiagnostic({
+              threadId: input.threadId,
+              name: "turn.prompt.still_pending",
+              level: "warning",
+              payload: {
+                turnId,
+                elapsedMs: Date.now() - promptStartedAtMs,
+                model: resolvedModel,
+              },
+            });
+          }).pipe(Effect.forkChild);
 
-        const promptStartedAtMs = Date.now();
-        const promptSummary = summarizePromptParts(promptParts);
-        yield* logDiagnostic({
-          threadId: input.threadId,
-          name: "turn.prompt.started",
-          payload: {
-            turnId,
+          const result = yield* ctx.acp
+            .prompt({
+              prompt: promptParts,
+            })
+            .pipe(
+              Effect.tap((response) =>
+                logDiagnostic({
+                  threadId: input.threadId,
+                  name: "turn.prompt.succeeded",
+                  payload: {
+                    turnId,
+                    elapsedMs: Date.now() - promptStartedAtMs,
+                    model: resolvedModel,
+                    stopReason: response.stopReason ?? null,
+                  },
+                }),
+              ),
+              Effect.tapError((error) =>
+                logDiagnostic({
+                  threadId: input.threadId,
+                  name: "turn.prompt.failed",
+                  level: "warning",
+                  payload: {
+                    turnId,
+                    elapsedMs: Date.now() - promptStartedAtMs,
+                    model: resolvedModel,
+                    error: error.message,
+                  },
+                }),
+              ),
+              Effect.ensuring(Fiber.interrupt(pendingPromptLogFiber)),
+              Effect.mapError((error) =>
+                isProviderAdapterRequestError(error)
+                  ? error
+                  : mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
+              ),
+            );
+
+          const turnRecord = ctx.turns.find((turn) => turn.id === turnId);
+          if (turnRecord) {
+            turnRecord.items.push({ prompt: promptParts, result });
+          } else {
+            ctx.turns.push({ id: turnId, items: [{ prompt: promptParts, result }] });
+          }
+          ctx.session = {
+            ...ctx.session,
+            activeTurnId: turnId,
+            updatedAt: yield* nowIso,
             model: resolvedModel,
-            promptParts: promptSummary,
-          },
-        });
-        const pendingPromptLogFiber = yield* Effect.gen(function* () {
-          yield* Effect.sleep("30 seconds");
-          yield* logDiagnostic({
-            threadId: input.threadId,
-            name: "turn.prompt.pending",
-            level: "warning",
-            payload: {
+          };
+
+          // Only the last remaining prompt settles the turn — a steer-
+          // superseded prompt resolving (usually cancelled) while another is
+          // in flight or pending must leave the merged turn running.
+          if (ctx.promptsInFlight === 1) {
+            yield* offerRuntimeEvent({
+              type: "turn.completed",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: input.threadId,
               turnId,
-              elapsedMs: Date.now() - promptStartedAtMs,
-              model: resolvedModel,
-            },
-          });
-          yield* Effect.sleep("90 seconds");
-          yield* logDiagnostic({
+              payload: {
+                state: result.stopReason === "cancelled" ? "cancelled" : "completed",
+                stopReason: result.stopReason ?? null,
+              },
+            });
+          }
+
+          return {
             threadId: input.threadId,
-            name: "turn.prompt.still_pending",
-            level: "warning",
-            payload: {
-              turnId,
-              elapsedMs: Date.now() - promptStartedAtMs,
-              model: resolvedModel,
-            },
-          });
-        }).pipe(Effect.forkChild);
-
-        const result = yield* ctx.acp
-          .prompt({
-            prompt: promptParts,
-          })
-          .pipe(
-            Effect.tap((response) =>
-              logDiagnostic({
-                threadId: input.threadId,
-                name: "turn.prompt.succeeded",
-                payload: {
-                  turnId,
-                  elapsedMs: Date.now() - promptStartedAtMs,
-                  model: resolvedModel,
-                  stopReason: response.stopReason ?? null,
-                },
-              }),
-            ),
-            Effect.tapError((error) =>
-              logDiagnostic({
-                threadId: input.threadId,
-                name: "turn.prompt.failed",
-                level: "warning",
-                payload: {
-                  turnId,
-                  elapsedMs: Date.now() - promptStartedAtMs,
-                  model: resolvedModel,
-                  error: error.message,
-                },
-              }),
-            ),
-            Effect.ensuring(Fiber.interrupt(pendingPromptLogFiber)),
-            Effect.mapError((error) =>
-              mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
-            ),
-          );
-
-        ctx.turns.push({ id: turnId, items: [{ prompt: promptParts, result }] });
-        ctx.activeTurnId = undefined;
-        ctx.session = {
-          ...ctx.session,
-          activeTurnId: undefined,
-          updatedAt: yield* nowIso,
-          model: resolvedModel,
-        };
-
-        yield* offerRuntimeEvent({
-          type: "turn.completed",
-          ...(yield* makeEventStamp()),
-          provider: PROVIDER,
-          threadId: input.threadId,
-          turnId,
-          payload: {
-            state: result.stopReason === "cancelled" ? "cancelled" : "completed",
-            stopReason: result.stopReason ?? null,
-          },
-        });
-
-        return {
-          threadId: input.threadId,
-          turnId,
-          resumeCursor: ctx.session.resumeCursor,
-        };
+            turnId,
+            resumeCursor: ctx.session.resumeCursor,
+          };
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
+            }),
+          ),
+        );
       });
 
     const interruptTurn: CursorAdapterShape["interruptTurn"] = (threadId) =>
